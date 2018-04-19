@@ -1,0 +1,7 @@
+[package]
+name = "gp"
+version = "0.1.0"
+authors = ["W <fuck@off.cunt>"]
+
+[dependencies]
+rand = "0.4"
