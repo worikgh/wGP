@@ -1,9 +1,12 @@
 extern crate rand;
+extern crate statistical;
 
 use rand::Rng;
 use rand::SeedableRng;
 use rand::StdRng;
+use statistical::mean;
 use std::collections::HashMap;
+//use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
@@ -72,9 +75,17 @@ impl Entropy{
 impl Node {
 
     // Build a random tree
+    /* Paramaters:
+     * Entropy - A source of randomness
+     * names - The names of the input fields
+     * level - The distance from the root node for this node
+     */
     fn new(e:&mut Entropy, names:&Vec<String>, level:usize) -> Node {
         let l = level+1;
-        let a = if level > 10 {
+
+        // FIXME Make this max levela configurable constant
+        let maxlevel = 10;
+        let a = if level > maxlevel { 
             4
         }else{
             e.gen_range(0, 6)
@@ -265,6 +276,9 @@ fn read_data() -> std::io::Result<Data> {
     Ok(ret)
 }
 
+// This is the root of atree and is stored in 'population:Vec<Tree>'
+type Tree = (u64, Box<Node>, f64);
+
 fn main() {
     println!("Start");
     let mut e = Entropy::new(&[11,2,3,422, 195]);
@@ -273,28 +287,41 @@ fn main() {
     let d:Data = read_data().unwrap();
 
     // Create a population
-    let mut population:Vec<(Box<Node>, f64)> = Vec::new();
+    let mut population:Vec<(Tree)> = Vec::new();
+    let mut maxid = match population.last() {
+        Some(n) => n.0,
+        None => 0,
+    };
     for _ in  1..25 {
         let n = Box::new(Node::new(&mut e, &d.names, 0));
-        population.push((n, 0.0));
+        maxid += 1;
+        population.push((maxid, n, 0.0));
     }
     
-    for r in d.rows.iter() {
-        // For each row of data Create a input
-        let mut inputs = Inputs{
-            dataf:HashMap::new(),
-        };
-        for h in d.names.iter() {
-            let k = h.clone();
-            let v1 = r.get(&k);
-            let v:f64 = *v1.unwrap();
-            inputs.dataf.insert(k, v);
-        }
+    let mut inputs = Inputs{
+        dataf:HashMap::new(),
+    };
 
-        // For each member of the population calculate a evaluation
-        for i in  0..24 { // FIXME Use a iterator over population
-            let e = population[i].0.evaluate(&inputs).unwrap();
-            population[i].1 = e;
-        }            
-    }
+    // For each member of the population calculate a evaluation
+    for p in population.iter_mut() {
+        let mut scorev:Vec<f64> = vec![];
+        for r in d.rows.iter() {
+            for h in d.names.iter() {
+                let k = h.clone();
+                let v1 = r.get(&k);
+                let v:f64 = *v1.unwrap();
+                inputs.dataf.insert(k, v);
+            }
+            let e = p.1.evaluate(&inputs).unwrap();
+            // Get the target
+            let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
+            // Compare
+            scorev.push( e-t);
+        }
+        // Take the mean value of the score
+        let score = mean(&scorev[..]);
+        p.2 = score;
+        println!("Tree: {}\t{}", p.0, p.2);
+    }            
 }
+
