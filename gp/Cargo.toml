@@ -5,3 +5,4 @@ authors = ["W <fuck@off.cunt>"]
 
 [dependencies]
 rand = "0.4"
+statistical = "0.1.1"
