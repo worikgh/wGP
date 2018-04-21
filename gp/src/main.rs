@@ -115,9 +115,56 @@ impl Node {
             _ => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None}
         }
     }
+    fn count_child_nodes(&self) -> usize {
+        // Recursive count of child nodes
+        let lc = match self.l {
+            Some(ref n) => n.count_child_nodes(),
+            None => 0,
+        };
+        let rc = match self.r {
+            Some(ref n) => n.count_child_nodes(),
+            None => 0,
+        };
+        lc + rc + 1
+    }
+    fn random_node(&self, e:& mut Entropy) -> NodeBox {
+        // Choose a subtree (node) of this tree (node).  FIXME there
+        // is a lot of optimisation to be done.  Paticularly if each
+        // node had the number of nodes that are child nodes of this...
+        let c = self.count_child_nodes();
+        let mut n = e.gen_range(0, c);
+        let mut node:& Node = self;
+        loop {
+            // Loop invariant n >= 1
+            // Exit when n == 1
+            if match node.l{Some(_) => false, None => true} &&
+                match node.r{Some(_) => false, None => true} {
+                    break;
+                }
+            let lc = match node.l {
+                Some(ref q) => (*q).count_child_nodes(),
+                None => 0,
+            };
 
-    fn random_node(&self) -> NodeBox {
-        self.copy()
+            if lc < n {
+                // Get node from right sub tree
+                node = match node.r {
+                    Some(ref r) => &*r,
+                    None => panic!(""),
+                };
+                n -= lc;
+            }else if lc > n {
+                // Get node from left subtree
+                node = match node.l {
+                    Some(ref l) => &*l,
+                    None => panic!(""),
+                };
+            }else{
+                assert_eq!(lc, n);
+                break;
+            }
+        }
+        NodeBox::new(*node.copy())
     }
     fn copy(&self) -> NodeBox {
         // Recursive copy
@@ -315,11 +362,11 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
     let p:NodeBox;// Parent
     let c:NodeBox;// Child
     if e.gen() > 0.0 {
-        p = (*l).random_node();
-        c = (*r).random_node();
+        p = (*l).random_node(e);
+        c = (*r).random_node(e);
     }else{
-        c = (*l).random_node();
-        p = (*r).random_node();
+        c = (*l).random_node( e);
+        p = (*r).random_node( e);
     }
     // Make the new tree by copying c
     let c = c.copy();
@@ -343,6 +390,29 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
     };
     ret
 }
+
+fn score_individual(n:&NodeBox, d:&Data) -> f64 {
+    let mut scorev:Vec<f64> = vec![];
+    let mut inputs = Inputs{
+        dataf:HashMap::new(),
+    };
+    for r in d.rows.iter() {
+        for h in d.names.iter() {
+            let k = h.clone();
+            let v1 = r.get(&k);
+            let v:f64 = *v1.unwrap();
+            inputs.dataf.insert(k, v);
+        }
+        let e = n.evaluate(&inputs).unwrap();
+        // Get the target
+        let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
+        // Compare
+        scorev.push( e-t);
+    }
+    // Take the mean value of the score
+    mean(&scorev[..])
+}
+
 fn main() {
     println!("Start");
     // let mut e = Entropy::new(&[11,2,3,422, 195]);
@@ -357,51 +427,31 @@ fn main() {
         None => 0,
     };
     for _ in  1..25 {
-        let n = Box::new(Node::new(&mut e, &d.names, 0));
         maxid += 1;
-        population.push((maxid, n, 0.0));
+        let n = Box::new(Node::new(&mut e, &d.names, 0));
+        let s = score_individual(&n, &d);
+        population.push((maxid, n, s));
     }
     
-    let mut inputs = Inputs{
-        dataf:HashMap::new(),
-    };
-
     // For each member of the population calculate a evaluation
     let num_generations = 1; // FIXME A configurable num_generations
     for _ in 0..num_generations {
-        for p in population.iter_mut() {
-            let mut scorev:Vec<f64> = vec![];
-            for r in d.rows.iter() {
-                for h in d.names.iter() {
-                    let k = h.clone();
-                    let v1 = r.get(&k);
-                    let v:f64 = *v1.unwrap();
-                    inputs.dataf.insert(k, v);
-                }
-                let e = p.1.evaluate(&inputs).unwrap();
-                // Get the target
-                let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
-                // Compare
-                scorev.push( e-t);
-            }
-            // Take the mean value of the score
-            let score = mean(&scorev[..]);
-            p.2 = score;
-            println!("Tree: {}\t{}", p.0, p.2);
-        }            
-        // Choose two trees to cross over
-        let ref p0 = population[0].1;
-        let ref p1 = population[1].1;
-        let pc = crossover(p0, p1, &mut e);
-        println!("p0: {}", p0.to_string());
-        println!("p1: {}", p1.to_string());
-        println!("pc: {}", pc.to_string());
-        let ref p0 = population[2].1;
-        let ref p1 = population[3].1;
-        let pc = crossover(p0, p1, &mut e);
-        println!("p0: {}", p0.to_string());
-        println!("p1: {}", p1.to_string());
-        println!("pc: {}", pc.to_string());
+        let num_crossovers = 10; // FIXME A configurable num_crossovers
+        for _ in 0..num_crossovers {
+            // Choose two trees to cross over
+            let ref p0 = population[0].1;
+            let ref p1 = population[1].1;
+            let pc = crossover(p0, p1, &mut e);
+            println!("p0: {}", p0.to_string());
+            println!("p1: {}", p1.to_string());
+            println!("pc: {}", pc.to_string());
+            let ref p0 = population[2].1;
+            let ref p1 = population[3].1;
+            let pc = crossover(p0, p1, &mut e);
+            println!("p0: {}", p0.to_string());
+            println!("p1: {}", p1.to_string());
+            println!("pc: {}", pc.to_string());
+        }
     }
 }
 
