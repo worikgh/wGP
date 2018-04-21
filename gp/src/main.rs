@@ -47,11 +47,12 @@ enum Operator {
 }
 
 // The basic unit of aAST
+type NodeBox = Box<Node>;
 struct Node {
     // Operator and a left and right child trees, or None.  
     o:Operator,
-    l:Option<Box<Node>>,
-    r:Option<Box<Node>>,
+    l:Option<NodeBox>,
+    r:Option<NodeBox>,
 }
 
 // The source of entropy that is passed to trees to create themselves.
@@ -115,6 +116,34 @@ impl Node {
         }
     }
 
+    fn random_node(&self) -> NodeBox {
+        self.copy()
+    }
+    fn copy(&self) -> NodeBox {
+        // Recursive copy
+        let ret = Node{
+            // FIXME Why not: o:self.o,
+            o:match self.o {
+                Operator::Add => Operator::Add,
+                Operator::Multiply => Operator::Multiply,
+                Operator::Invert => Operator::Invert,
+                Operator::Negate => Operator::Negate,
+                Operator::Terminal(ref t) => match *t{
+                    TerminalType::Float(f) => Operator::Terminal(TerminalType::Float(f)),
+                    TerminalType::Inputf64(ref s) => Operator::Terminal(TerminalType::Inputf64(s.clone())),
+                },
+            },
+            l:match self.l {
+                Some(ref l) => Some(l.copy()),
+                None => None,
+            },
+            r:match self.r {
+                Some(ref r) => Some(r.copy()),
+                 None => None,
+            },
+        };
+        NodeBox::new(ret)
+    }
     #[allow(dead_code)]
     fn to_string(&self) -> String {
         let mut ret = "".to_string();
@@ -146,7 +175,8 @@ impl Node {
         macro_rules! node_to_string1 {
             ($name:ident) => {
                 {
-                    ret.push_str("$name ");
+                    ret.push_str(stringify!($name));
+                    ret.push_str(" ");
                     child_to_string!(l);
                 }
             }
@@ -277,12 +307,46 @@ fn read_data() -> std::io::Result<Data> {
 }
 
 // This is the root of atree and is stored in 'population:Vec<Tree>'
-type Tree = (u64, Box<Node>, f64);
+type Tree = (u64, NodeBox, f64);
 
+fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
+
+    
+    let p:NodeBox;// Parent
+    let c:NodeBox;// Child
+    if e.gen() > 0.0 {
+        p = (*l).random_node();
+        c = (*r).random_node();
+    }else{
+        c = (*l).random_node();
+        p = (*r).random_node();
+    }
+    // Make the new tree by copying c
+    let c = c.copy();
+
+    // The tree to return
+    let mut ret = p.copy();
+    
+    // Choose a branch off p to copy c to
+    match (*ret).r {
+        Some(_) => {
+            // p has two children.  Choose one randomly
+            if e.gen() > 0.0 {
+                // Left
+                (*ret).l = Some(c);
+            }else{
+                // Right
+                (*ret).r = Some(c);
+            }
+        },
+        None => (*ret).l = Some(c),
+    };
+    ret
+}
 fn main() {
     println!("Start");
-    let mut e = Entropy::new(&[11,2,3,422, 195]);
-     // let mut e = Entropy::new(&[11,2,3,4]);
+    // let mut e = Entropy::new(&[11,2,3,422, 195]);
+     let mut e = Entropy::new(&[11,2,3,4]);
 
     let d:Data = read_data().unwrap();
 
@@ -303,25 +367,41 @@ fn main() {
     };
 
     // For each member of the population calculate a evaluation
-    for p in population.iter_mut() {
-        let mut scorev:Vec<f64> = vec![];
-        for r in d.rows.iter() {
-            for h in d.names.iter() {
-                let k = h.clone();
-                let v1 = r.get(&k);
-                let v:f64 = *v1.unwrap();
-                inputs.dataf.insert(k, v);
+    let num_generations = 1; // FIXME A configurable num_generations
+    for _ in 0..num_generations {
+        for p in population.iter_mut() {
+            let mut scorev:Vec<f64> = vec![];
+            for r in d.rows.iter() {
+                for h in d.names.iter() {
+                    let k = h.clone();
+                    let v1 = r.get(&k);
+                    let v:f64 = *v1.unwrap();
+                    inputs.dataf.insert(k, v);
+                }
+                let e = p.1.evaluate(&inputs).unwrap();
+                // Get the target
+                let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
+                // Compare
+                scorev.push( e-t);
             }
-            let e = p.1.evaluate(&inputs).unwrap();
-            // Get the target
-            let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
-            // Compare
-            scorev.push( e-t);
-        }
-        // Take the mean value of the score
-        let score = mean(&scorev[..]);
-        p.2 = score;
-        println!("Tree: {}\t{}", p.0, p.2);
-    }            
+            // Take the mean value of the score
+            let score = mean(&scorev[..]);
+            p.2 = score;
+            println!("Tree: {}\t{}", p.0, p.2);
+        }            
+        // Choose two trees to cross over
+        let ref p0 = population[0].1;
+        let ref p1 = population[1].1;
+        let pc = crossover(p0, p1, &mut e);
+        println!("p0: {}", p0.to_string());
+        println!("p1: {}", p1.to_string());
+        println!("pc: {}", pc.to_string());
+        let ref p0 = population[2].1;
+        let ref p1 = population[3].1;
+        let pc = crossover(p0, p1, &mut e);
+        println!("p0: {}", p0.to_string());
+        println!("p1: {}", p1.to_string());
+        println!("pc: {}", pc.to_string());
+    }
 }
 
