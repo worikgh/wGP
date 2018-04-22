@@ -415,7 +415,8 @@ fn score_individual(n:&NodeBox, d:&Data) -> f64 {
         scorev.push( 1.0/(e-t).abs());
     }
     // Take the mean value of the score
-    mean(&scorev[..])
+    let ret = mean(&scorev[..]);
+    ret
 }
 
 fn main() {
@@ -441,9 +442,10 @@ fn main() {
         population.push((maxid, n, s));
     }
     // For each member of the population calculate a evaluation
-    let num_generations = 1; // FIXME A configurable num_generations
-    for _ in 0..num_generations {
+    let num_generations = 2000; // FIXME A configurable num_generations
+    for generation in 0..num_generations {
 
+        println!("G: {} Sive: {}", generation, population.len()+1);
         // Filter out members of population that have no valid score (arithmetic error)
         population = population.into_iter().filter(|x| {
             x.2.is_finite()
@@ -455,43 +457,58 @@ fn main() {
             let b2 = b.2;
             a2.partial_cmp(&b2).unwrap_or(Ordering::Equal)
         });
+        println!("Best 5:");
+        
+        for i in 1..5 {
+            let idx = population.len() - i;
+            println!("ID: {} Sc:{}\t{}", population[idx].0, population[idx].2, population[idx].1.to_string());
+        }
         
         let mut total_score = 0.0;
         for x in population.iter() {
-            println!("Score {}", total_score);
             total_score += x.2;
         }
         let num_crossovers = 10; // FIXME A configurable num_crossovers
+
+        // Choose a node from population to participate in crossover.
+        // The higher the score the node got last generation the
+        // higher the probability it will be selected to be
+        // participate in crossover
+        macro_rules! get_node {
+            () => {
+                {
+                    let mut p:Option<&NodeBox> = None;
+
+                    // The selector.  By setting the floor to more
+                    // than 0 nodes with 0.0 score will not get
+                    // selected.  
+                    let s = e.gen_rangef64(0.000001, total_score);
+                    
+                    let mut cum_score = 0.0;
+                    for i in 0..population.len() {
+                        let t:&Tree = &population[i];
+                        cum_score += t.2;
+                        if cum_score >= s {
+                            let ref n1 = t.1;
+                            p = Some(n1);
+                            break;
+                        }
+                    }
+                    p
+                }
+            }
+        };
         for _ in 0..num_crossovers {
             // Choose two trees to cross over
-            macro_rules! get_node {
-                () => {
-                    {
-                        let mut p:Option<&NodeBox> = None;
-                        let s = e.gen_rangef64(0.0, total_score);                    
-                        let mut cum_score = 0.0;
-                        for i in 0..population.len() {
-                            let t:&Tree = &population[i];
-                            cum_score += t.2;
-                            if cum_score >= s {
-                                let ref n1 = t.1;
-                                p = Some(n1);
-                                break;
-                            }
-                        }
-                        p
-                    }
-                }
-            };
             let pc; // Node resulting from crossover
             {
                 let p0 = get_node!().unwrap();
                 let p1 = get_node!().unwrap();
 
                 pc = crossover(&p0, &p1, &mut e);
-                println!("p0: {}", p0.to_string());
-                println!("p1: {}", p1.to_string());
-                println!("pc: {}", pc.to_string());
+                // println!("p0: {}", p0.to_string());
+                // println!("p1: {}", p1.to_string());
+                // println!("pc: {}", pc.to_string());
             }
             let s = score_individual(&pc, &d);
             maxid += 1;
