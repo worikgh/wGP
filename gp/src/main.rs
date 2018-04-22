@@ -11,6 +11,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
+use std::cmp::Ordering;
 
 // The type of data that can be a terminal
 enum TerminalType {
@@ -69,6 +70,9 @@ impl Entropy{
         self.rng.gen()
     }
     fn gen_range(& mut self, a:usize, b:usize)->usize{
+        self.rng.gen_range(a,b)
+    }
+    fn gen_rangef64(& mut self, a:f64, b:f64)->f64{
         self.rng.gen_range(a,b)
     }
 }
@@ -353,8 +357,6 @@ fn read_data() -> std::io::Result<Data> {
     Ok(ret)
 }
 
-// This is the root of atree and is stored in 'population:Vec<Tree>'
-type Tree = (u64, NodeBox, f64);
 
 fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
 
@@ -391,6 +393,9 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
     ret
 }
 
+// Calculate the score of a indvidual against the data
+// Param n: The individual
+// Param d: The data to use
 fn score_individual(n:&NodeBox, d:&Data) -> f64 {
     let mut scorev:Vec<f64> = vec![];
     let mut inputs = Inputs{
@@ -407,7 +412,7 @@ fn score_individual(n:&NodeBox, d:&Data) -> f64 {
         // Get the target
         let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
         // Compare
-        scorev.push( e-t);
+        scorev.push( 1.0/(e-t).abs());
     }
     // Take the mean value of the score
     mean(&scorev[..])
@@ -415,42 +420,82 @@ fn score_individual(n:&NodeBox, d:&Data) -> f64 {
 
 fn main() {
     println!("Start");
-    // let mut e = Entropy::new(&[11,2,3,422, 195]);
-     let mut e = Entropy::new(&[11,2,3,4]);
 
+    // The source of entropy.  This is done this way so the same seed
+    // can be used to produce repeatable results
+    // let mut e = Entropy::new(&[11,2,3,422, 195]);
+    let mut e = Entropy::new(&[11,2,3,4]);
+
+    // Load the data
     let d:Data = read_data().unwrap();
 
     // Create a population
+    // This is the root of a tree
+    type Tree = (u64, NodeBox, f64);
     let mut population:Vec<(Tree)> = Vec::new();
-    let mut maxid = match population.last() {
-        Some(n) => n.0,
-        None => 0,
-    };
+    let mut maxid = 0; // Each tree as a ID
     for _ in  1..25 {
         maxid += 1;
         let n = Box::new(Node::new(&mut e, &d.names, 0));
         let s = score_individual(&n, &d);
         population.push((maxid, n, s));
     }
-    
     // For each member of the population calculate a evaluation
     let num_generations = 1; // FIXME A configurable num_generations
     for _ in 0..num_generations {
+
+        // Filter out members of population that have no valid score (arithmetic error)
+        population = population.into_iter().filter(|x| {
+            x.2.is_finite()
+        }).collect();
+        
+        // Sort population by score
+        &population[..].sort_by(|a, b| {
+            let a2 = a.2;
+            let b2 = b.2;
+            a2.partial_cmp(&b2).unwrap_or(Ordering::Equal)
+        });
+        
+        let mut total_score = 0.0;
+        for x in population.iter() {
+            println!("Score {}", total_score);
+            total_score += x.2;
+        }
         let num_crossovers = 10; // FIXME A configurable num_crossovers
         for _ in 0..num_crossovers {
             // Choose two trees to cross over
-            let ref p0 = population[0].1;
-            let ref p1 = population[1].1;
-            let pc = crossover(p0, p1, &mut e);
-            println!("p0: {}", p0.to_string());
-            println!("p1: {}", p1.to_string());
-            println!("pc: {}", pc.to_string());
-            let ref p0 = population[2].1;
-            let ref p1 = population[3].1;
-            let pc = crossover(p0, p1, &mut e);
-            println!("p0: {}", p0.to_string());
-            println!("p1: {}", p1.to_string());
-            println!("pc: {}", pc.to_string());
+            macro_rules! get_node {
+                () => {
+                    {
+                        let mut p:Option<&NodeBox> = None;
+                        let s = e.gen_rangef64(0.0, total_score);                    
+                        let mut cum_score = 0.0;
+                        for i in 0..population.len() {
+                            let t:&Tree = &population[i];
+                            cum_score += t.2;
+                            if cum_score >= s {
+                                let ref n1 = t.1;
+                                p = Some(n1);
+                                break;
+                            }
+                        }
+                        p
+                    }
+                }
+            };
+            let pc; // Node resulting from crossover
+            {
+                let p0 = get_node!().unwrap();
+                let p1 = get_node!().unwrap();
+
+                pc = crossover(&p0, &p1, &mut e);
+                println!("p0: {}", p0.to_string());
+                println!("p1: {}", p1.to_string());
+                println!("pc: {}", pc.to_string());
+            }
+            let s = score_individual(&pc, &d);
+            maxid += 1;
+            population.push((maxid, pc, s));
         }
     }
 }
