@@ -275,6 +275,65 @@ impl Node {
         ret
     }
 
+    #[allow(dead_code)]
+    fn to_pretty_string(&self, level:usize) -> String {
+        let mut ret = "".to_string();
+        let sp = " ";
+        // Macro to cmake the child of a node into a string
+        macro_rules! child_to_string {
+            ($name:ident) => {
+                match self.$name {
+                    Some(ref $name) => ret.push_str(&(*$name).to_pretty_string(level+1)),
+                    None => panic!("{}", 1),
+                };
+            }
+        };
+        
+
+        // Macro to make a two child  node into a string
+        macro_rules! node_to_string2 {
+            ($name:ident) => {
+                {
+                    for i in 0..level {
+                        ret.push_str(sp);
+                    }
+                    ret.push_str(stringify!($name) );
+                    ret.push_str("\n");
+                    child_to_string!(l);
+                    child_to_string!(r);
+                }
+            }
+        };
+
+        // Macro to make a one child  node into a string
+        macro_rules! node_to_string1 {
+            ($name:ident) => {
+                {
+                    for i in 0..level {
+                        ret.push_str(sp);
+                    }
+                    ret.push_str(stringify!($name));
+                    ret.push_str("\n");
+                    child_to_string!(l);
+                }
+            }
+        };
+        
+        match self.o {
+            Operator::Add => node_to_string2!(Add),
+            Operator::Multiply => node_to_string2!(Multiply),
+            Operator::Negate => node_to_string1!(Negate),
+            Operator::Invert => node_to_string1!(Invert),
+            Operator::Terminal(ref f) => {
+                for i in 0..level {
+                    ret.push_str(sp);
+                }
+                ret.push_str(&format!("{}\n", f));
+            },
+        };
+        ret
+    }
+
     fn evaluate(&self, inputs:&Inputs)->Option<f64> {
         macro_rules! evaluate {
             ($a:ident) => {
@@ -509,10 +568,11 @@ fn main() {
         population.push((maxid, n, s));
     }
     // For each member of the population calculate a evaluation
-    let num_generations = 2000; // FIXME A configurable num_generations
+    let num_generations = 1500; // FIXME A configurable num_generations
+    let mut best_id = 0;
+    let mut best_individual = "".to_string();
     for generation in 0..num_generations {
-
-        println!("G: {} Sive: {}", generation, population.len()+1);
+        print!("\r{}\t{}     ", generation, population.len()-1);
         // Filter out members of population that have no valid score (arithmetic error)
         population = population.into_iter().filter(|x| {
             x.2.is_finite()
@@ -524,11 +584,18 @@ fn main() {
             let b2 = b.2;
             a2.partial_cmp(&b2).unwrap_or(Ordering::Equal)
         });
-        println!("Best 5:");
-        
-        for i in 1..5 {
-            let idx = population.len() - i;
-            println!("ID: {} Sc:{}\t{}", population[idx].0, population[idx].2, population[idx].1.to_string());
+
+        // If the best individual has changed display it
+        let best_idx = population.len()-1;
+        let _best_id = population[best_idx].0;
+        if _best_id != best_id {
+            best_id = _best_id;
+            let this_individual = population[best_idx].1.to_string().clone();
+            if this_individual != best_individual {
+                best_individual = this_individual.clone();
+                println!("ID: {} Sc:{}\n{}\n",
+                         population[best_idx].0, population[best_idx].2, population[best_idx].1.to_pretty_string(0));
+            }
         }
         
         let mut total_score = 0.0;
@@ -582,5 +649,6 @@ fn main() {
             population.push((maxid, pc, s));
         }
     }
+    println!("");
 }
 
