@@ -27,7 +27,7 @@ struct Inputs {
 // Get the data from the terminal
 fn gt(tt:&TerminalType) -> String {
     match tt {
-        &TerminalType::Float(f) => format!("Float {}",f),
+        &TerminalType::Float(f) => format!("Float {} ",f),
         &TerminalType::Inputf64(ref s) => format!("{} ",s),
     }
 }
@@ -78,8 +78,38 @@ impl Entropy{
 }
 
 impl Node {
+    fn new_from_string(s:&str) -> Node {
+        let mut iter = s.split_whitespace();
+        Node::new_from_iter(&mut iter)
+    }
+    fn new_from_iter(iter:&mut std::str::SplitWhitespace) -> Node{
+        
+        let operator = match iter.next().unwrap() {
+            "Add" => Operator::Add,
+            "Multiply" => Operator::Multiply,
+            "Invert" => Operator::Invert,
+            "Negate" => Operator::Negate,
+            "Float" =>
+            {
+                let s = iter.next().unwrap();
+                let s = s.parse::<f64>().unwrap();
+                Operator::Terminal(TerminalType::Float(s))
+            },
+            s => Operator::Terminal(TerminalType::Inputf64(s.to_string())),
+        };
 
-    // Build a random tree
+        let l = match operator {
+            Operator::Terminal(_) => None,
+            _ => Some(NodeBox::new(Node::new_from_iter(iter))),
+        };
+        let r = match operator {
+            Operator::Add|Operator::Multiply =>
+                Some(NodeBox::new(Node::new_from_iter(iter))),
+            _ => None,
+        };
+                
+        Node{o:operator, l:l, r:r}
+    }    // Build a random tree
     /* Paramaters:
      * Entropy - A source of randomness
      * names - The names of the input fields
@@ -239,7 +269,7 @@ impl Node {
             Operator::Negate => node_to_string1!(Negate),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
-                ret.push_str(&format!("{} ", f));
+                ret.push_str(&format!("{}", f));
             },
         };
         ret
@@ -282,6 +312,43 @@ impl Node {
                 Some(1.0/left)
             },
         }
+    }
+}// impl Node
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_node_eval(){
+        let mut inputs = Inputs {
+            dataf:HashMap::new(),
+        };
+        let s = "Multiply Float 0.06 Negate Diameter";
+        inputs.dataf.insert("Diameter".to_string(), 10.0);
+        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        assert_eq!(t, -0.60);
+        let s = "Invert Float 0.1";
+        inputs.dataf.insert("Diameter".to_string(), 10.0);
+        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        assert_eq!(t, 10.0);
+
+        let s = "Add Float 2000.0 Invert Float 0.1";
+        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        assert_eq!(t, 2010.0);
+        let s = "Multiply Height Add Float 10.0 Invert Float 0.1";
+        inputs.dataf.insert("Height".to_string(), 10.0);
+        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        assert_eq!(t, 200.0);
+    }
+    #[test]
+    fn test_node_from_string(){
+        let s = "Add Add Add Invert Height Diameter Add Negate Float 0.03049337449511591 Add Multiply Negate Invert Float 0.40090461861005733 Negate Diameter Negate Float 0.06321754406175395 Length";
+        let n = Node::new_from_string(s);
+        let ns = &n.to_string()[..];
+        println!("");
+        println!("1: {}", s);
+        println!("2: {}", ns.trim());
+        assert_eq!(ns.trim(), s.to_string());        
     }
 }
 
