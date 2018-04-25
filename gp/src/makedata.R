@@ -9,7 +9,8 @@ for (c1 in 1:length(c)){
     }
 }
 
-f <- 0.01*m[,1]^2 + m[,2]^3 + 1.3*m[,1]
-d <- cbind(m,f)
-colnames(d) <- c('a', 'b', 'c')
+#f <- 0.01*m[,1]^2 + m[,2]^3 + 1.3*m[,1]
+f <- m[,1]^2+m[,1]+1
+d <- cbind(m[,1],f)
+colnames(d) <- c('x', 'y')
 write.csv(file='Data.in', d, row.names=FALSE)
