@@ -553,9 +553,10 @@ fn score_individual(n:&NodeBox, d:&Data) -> f64 {
 
     // Take the maximum - The worst result
     // &scorev[..].sort_by(|a, b| {b.partial_cmp(&a).unwrap_or(Ordering::Equal)});
+    // let ret = scorev[0];
 
     //println!("Sc! {} {}", scorev[0], scorev[scorev.len()-1]);
-    scorev[0].ln_1p()
+    ret.ln_1p()
 }
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
@@ -690,19 +691,24 @@ impl Config {
         for line in lines {
             let mut iter = line.split_whitespace();
             let k = iter.next().unwrap();
-            let v = iter.collect::<String>();//::<String>;
-            config_hm.insert(k.to_string(), v.to_string());
+            let v = iter.map(|x| format!("{} ", x)).collect::<String>();
+            config_hm.insert(k.to_string(), v.trim().to_string());
         }
         Config{data:config_hm}
     }
     fn get_usize(&self, k:&str) -> Option<usize> {
-        match self.data.get(k) {
-            Some(v) => match v.parse::<usize>() {
-                Ok(v) => Some(v),
-                _ => None,
+        let v = match self.data.get(k) {
+            Some(v) => v,
+            _ => panic!(""),
+        };
+        let ret = match v.parse::<usize>() {
+            Ok(v) => Some(v),
+            _ => {
+                None
             },
-            _ => None,
-        }
+                
+        };
+        ret
     }
     fn get_string(&self, k:&str) -> Option<String> {
         match self.data.get(k) {
@@ -748,7 +754,6 @@ impl Recorder {
 fn main() {
     println!("Start");
     let config = Config::new();
-
     let num_generations = config.get_usize("num_generations").unwrap();
     let max_population =  config.get_usize("max_population").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
@@ -758,7 +763,7 @@ fn main() {
     // Set up output files
     let mut generation_recorder = Recorder::new("Generations.txt");
     let mut birth_death_recorder = Recorder::new("BirthsAndDeaths.txt");
-    
+
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
     // let mut e = Entropy::new(&[11,2,3,422, 195]);
@@ -766,183 +771,191 @@ fn main() {
 
     // Load the data
     let d:Data = read_data().unwrap();
-
-    // Create a population. The first part of the tuple is the set of
-    // trees that is the population.  The second part stores the
-    // string representation of every individual (Node::to_string())
-    // to keep duplicates out of the population
-    let mut population:(Vec<Tree>, HashMap<String, bool>) = (Vec::new(), HashMap::new());
-
-    let mut maxid = 0; // Each tree as a ID
-    loop {
-        let n = Box::new(Node::new(&mut e, &d.names, 0));
-        let st = n.to_string();
-        population.1.entry(st.clone()).or_insert(false);
-        if !population.1.get(&st).unwrap() {
-            // This node is unique
-            maxid += 1;
-            population.1.insert(st, true);
-            let sc = score_individual(&n, &d);
-            {
-                birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
-            }
-            population.0.push((maxid, n, sc));
-        }
-        if population.0.len() == initial_population {
-            break;
-        }
-    }
-    println!("Created initial population");
-    // For each member of the population calculate a evaluation
-
-    let mut best_id = 0;
-    let mut best_individual = "".to_string();
-    for generation in 0..num_generations {
-        let s = format!("{} {} {} {} {}", generation, population.0[0].0, population.0[0].2, population.0.len(), population.0[0].1.to_string());
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
-        birth_death_recorder.buffer.flush().unwrap();
-        // Filter out members of population that have no valid score (arithmetic error)
-        population.0 = population.0.into_iter().filter(|x| {
-            x.2.is_finite()
-        }).collect();
+    if let Some(ns) = config.get_string("eval") {
+        let n = NodeBox::new(Node::new_from_string(ns.as_str()));
+        let s = (*n).to_string();
+        println!("{} {}", s, score_individual(&n, &d));
         
-        // Sort population by score, descending so the best are
-        // earliest.  Allows the less good individuals to be easilly
-        // pop'd off the end
-        &population.0[..].sort_by(|a, b| {
-            let a2 = a.2;
-            let b2 = b.2;
-            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
-        });
-
-        // If the best individual has changed display it
-        let best_idx = 0;
-        let _best_id = population.0[best_idx].0;
-        if _best_id != best_id {
-            best_id = _best_id;
-            let this_individual = population.0[best_idx].1.to_string().clone();
-            if this_individual != best_individual {
-                best_individual = this_individual.clone();
-                println!("G {} ID: {} Sc:{}\n{}\n",
-                         generation, population.0[best_idx].0, population.0[best_idx].2, population.0[best_idx].1.to_pretty_string(0));
-
-                // Best tree
-                let ref n = population.0[best_idx].1;
-
-                // ID to lable it
-                let lable = population.0[best_idx].0;
-
-                // Store its data
-                add_simulation(simulate(&n, &d), lable);
-            }
-        }
+    }else{
         
-        let mut total_score = 0.0;
-        for x in population.0.iter() {
-            total_score += x.2;
-        }
 
-        // Choose a node from population to participate in crossover.
-        // The higher the score the node got last generation the
-        // higher the probability it will be selected to be
-        // participate in crossover
-        macro_rules! get_node {
-            () => {
+        // Create a population. The first part of the tuple is the set of
+        // trees that is the population.  The second part stores the
+        // string representation of every individual (Node::to_string())
+        // to keep duplicates out of the population
+        let mut population:(Vec<Tree>, HashMap<String, bool>) = (Vec::new(), HashMap::new());
+
+        let mut maxid = 0; // Each tree as a ID
+        loop {
+            let n = Box::new(Node::new(&mut e, &d.names, 0));
+            let st = n.to_string();
+            population.1.entry(st.clone()).or_insert(false);
+            if !population.1.get(&st).unwrap() {
+                // This node is unique
+                maxid += 1;
+                population.1.insert(st, true);
+                let sc = score_individual(&n, &d);
                 {
-                    let mut p:Option<usize> = None;
-
-                    // The selector.  By setting the floor to more
-                    // than 0 nodes with 0.0 score will not get
-                    // selected.  
-                    let s = e.gen_rangef64(0.000001, total_score);
-                    
-                    let mut cum_score = 0.0;
-                    for i in 0..population.0.len() {
-                        let t:&Tree = &population.0[i];
-                        cum_score += t.2;
-                        if cum_score >= s {
-                            p = Some(i);
-                            break;
-                        }
-                    }
-                    p
+                    birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
                 }
+                population.0.push((maxid, n, sc));
             }
-        };
-
-        // The number of crossovers to do is (naturally)
-        // population.len() * crossover_percent/100
-        let ncross = population.0.len() * crossover_percent/100;
-        for _ in 0..ncross {
-            // Choose two trees to cross over
-            let  pc; // Node resulting from crossover
-            let i0 = get_node!().unwrap();
-            let i1 = get_node!().unwrap();
-            let mut flag = false;  // Set to true if pc is unique
-
-            let mut s = 0.0; // Score
-            {
-                // Block to limit scope of p0 and p1
-                let ref p0 = &population.0[i0];
-                let ref p1 = &population.0[i1];
-                pc = crossover(&p0.1, &p1.1, &mut e);
-                let st = pc.to_string();
-                population.1.entry(st.clone()).or_insert(false);
-                if !population.1.get(&st).unwrap() {
-                    // This node is unique
-                    population.1.insert(st, true);
-                    flag =  true;
-                }else{
-                }
-                    
-                if flag {
-                    maxid += 1;  // Done here so it can be passed to record_birth
-                    s = score_individual(&pc, &d);
-                    birth_death_recorder.write_line(&format!("{} + {} = {}/{}: {}", p0.0, p1.0, maxid, s, pc.to_string()));
-                }
-            }
-            if flag {
-                //println!("Befoe score: {}  ", maxid);
-                population.0.push((maxid, pc, s));
+            if population.0.len() == initial_population {
+                break;
             }
         }
-        // Adjust population
-        if population.0.len() > max_population {
-            while population.0.len() > max_population {
-                for _ in 1..cull_size {
-                    let p = population.0.pop().unwrap();
-                    birth_death_recorder.write_line(&format!("RIP {}", p.0)[..]);
+        println!("Created initial population");
+        // For each member of the population calculate a evaluation
+
+        let mut best_id = 0;
+        let mut best_individual = "".to_string();
+        for generation in 0..num_generations {
+            let s = format!("{} {} {} {} {}", generation, population.0[0].0, population.0[0].2, population.0.len(), population.0[0].1.to_string());
+            generation_recorder.write_line(&s[..]);
+            generation_recorder.buffer.flush().unwrap();
+            birth_death_recorder.buffer.flush().unwrap();
+            // Filter out members of population that have no valid score (arithmetic error)
+            population.0 = population.0.into_iter().filter(|x| {
+                x.2.is_finite()
+            }).collect();
+            
+            // Sort population by score, descending so the best are
+            // earliest.  Allows the less good individuals to be easilly
+            // pop'd off the end
+            &population.0[..].sort_by(|a, b| {
+                let a2 = a.2;
+                let b2 = b.2;
+                b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
+            });
+
+            // If the best individual has changed display it
+            let best_idx = 0;
+            let _best_id = population.0[best_idx].0;
+            if _best_id != best_id {
+                best_id = _best_id;
+                let this_individual = population.0[best_idx].1.to_string().clone();
+                if this_individual != best_individual {
+                    best_individual = this_individual.clone();
+                    println!("G {} ID: {} Sc:{}\n{}\n",
+                             generation, population.0[best_idx].0, population.0[best_idx].2, population.0[best_idx].1.to_pretty_string(0));
+
+                    // Best tree
+                    let ref n = population.0[best_idx].1;
+
+                    // ID to lable it
+                    let lable = population.0[best_idx].0;
+
+                    // Store its data
+                    add_simulation(simulate(&n, &d), lable);
                 }
             }
-            while population.0.len() < max_population {
-                let n = Box::new(Node::new(&mut e, &d.names, 0));
-                let st = n.to_string();
-                population.1.entry(st.clone()).or_insert(false);
-                if !population.1.get(&st).unwrap() {
-                    // This node is unique
-                    maxid += 1;
-                    population.1.insert(st, true);
-                    let sc = score_individual(&n, &d);
+            
+            let mut total_score = 0.0;
+            for x in population.0.iter() {
+                total_score += x.2;
+            }
+
+            // Choose a node from population to participate in crossover.
+            // The higher the score the node got last generation the
+            // higher the probability it will be selected to be
+            // participate in crossover
+            macro_rules! get_node {
+                () => {
                     {
-                        birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, s, n.to_string()));
-                    }
-                    population.0.push((maxid, n, sc));
-                }
-            }                
-        }
-        let mut hh:HashMap<String, usize> = HashMap::new();
-        for i in 0..population.0.len() {
-            let k = population.0[i].1.to_string();
-            let n = hh.entry(k).or_insert(0);
-            *n += 1;
-        }
-        
-        // for h in hh.keys() {
-        //     println!("TEST {} {}", hh.get(h.as_str()).unwrap(), h);
-        // }
-        //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
-    }
-    println!("Bye!");
-}
+                        let mut p:Option<usize> = None;
 
+                        // The selector.  By setting the floor to more
+                        // than 0 nodes with 0.0 score will not get
+                        // selected.  
+                        let s = e.gen_rangef64(0.000001, total_score);
+                        
+                        let mut cum_score = 0.0;
+                        for i in 0..population.0.len() {
+                            let t:&Tree = &population.0[i];
+                            cum_score += t.2;
+                            if cum_score >= s {
+                                p = Some(i);
+                                break;
+                            }
+                        }
+                        p
+                    }
+                }
+            };
+
+            // The number of crossovers to do is (naturally)
+            // population.len() * crossover_percent/100
+            let ncross = population.0.len() * crossover_percent/100;
+            for _ in 0..ncross {
+                // Choose two trees to cross over
+                let  pc; // Node resulting from crossover
+                let i0 = get_node!().unwrap();
+                let i1 = get_node!().unwrap();
+                let mut flag = false;  // Set to true if pc is unique
+
+                let mut s = 0.0; // Score
+                {
+                    // Block to limit scope of p0 and p1
+                    let ref p0 = &population.0[i0];
+                    let ref p1 = &population.0[i1];
+                    pc = crossover(&p0.1, &p1.1, &mut e);
+                    let st = pc.to_string();
+                    population.1.entry(st.clone()).or_insert(false);
+                    if !population.1.get(&st).unwrap() {
+                        // This node is unique
+                        population.1.insert(st, true);
+                        flag =  true;
+                    }else{
+                    }
+                    
+                    if flag {
+                        maxid += 1;  // Done here so it can be passed to record_birth
+                        s = score_individual(&pc, &d);
+                        birth_death_recorder.write_line(&format!("{} + {} = {}/{}: {}", p0.0, p1.0, maxid, s, pc.to_string()));
+                    }
+                }
+                if flag {
+                    //println!("Befoe score: {}  ", maxid);
+                    population.0.push((maxid, pc, s));
+                }
+            }
+            // Adjust population
+            if population.0.len() > max_population {
+                while population.0.len() > max_population {
+                    for _ in 1..cull_size {
+                        let p = population.0.pop().unwrap();
+                        birth_death_recorder.write_line(&format!("RIP {}", p.0)[..]);
+                    }
+                }
+                while population.0.len() < max_population {
+                    let n = Box::new(Node::new(&mut e, &d.names, 0));
+                    let st = n.to_string();
+                    population.1.entry(st.clone()).or_insert(false);
+                    if !population.1.get(&st).unwrap() {
+                        // This node is unique
+                        maxid += 1;
+                        population.1.insert(st, true);
+                        let sc = score_individual(&n, &d);
+                        {
+                            birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, s, n.to_string()));
+                        }
+                        population.0.push((maxid, n, sc));
+                    }
+                }                
+            }
+            let mut hh:HashMap<String, usize> = HashMap::new();
+            for i in 0..population.0.len() {
+                let k = population.0[i].1.to_string();
+                let n = hh.entry(k).or_insert(0);
+                *n += 1;
+            }
+            
+            // for h in hh.keys() {
+            //     println!("TEST {} {}", hh.get(h.as_str()).unwrap(), h);
+            // }
+            //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
+        }
+        println!("Bye!");
+    }
+
+}
