@@ -353,7 +353,8 @@ impl Node {
         }
         match self.o {
             Operator::Terminal(TerminalType::Float(f)) => Some(f),
-            Operator::Terminal(TerminalType::Inputf64(ref s)) => Some(*(inputs.dataf.get(s).unwrap())),
+            Operator::Terminal(TerminalType::Inputf64(ref s)) => 
+                Some(*(inputs.dataf.get(s).unwrap())),
             Operator::Add => {
                 let left = evaluate!(l);
                 let right = evaluate!(r);
@@ -810,7 +811,10 @@ fn main() {
         let mut best_id = 0;
         let mut best_individual = "".to_string();
         for generation in 0..num_generations {
-            let s = format!("{} {} {} {} {}", generation, population.0[0].0, population.0[0].2, population.0.len(), population.0[0].1.to_string());
+            let s = format!("{} {} {} {} {}", generation,
+                            population.0[0].0, population.0[0].2,
+                            population.0.len(),
+                            population.0[0].1.to_string());
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
             birth_death_recorder.buffer.flush().unwrap();
