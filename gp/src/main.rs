@@ -1,17 +1,20 @@
 extern crate rand;
 extern crate statistical;
 
+use std::path::Path;
+use std::time::SystemTime;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::StdRng;
 use statistical::mean;
+use std::cmp::Ordering;
 use std::collections::HashMap;
-//use std::env;
 use std::fmt;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::prelude::*;
-use std::cmp::Ordering;
 
 // The type of data that can be a terminal
 enum TerminalType {
@@ -123,7 +126,7 @@ impl Node {
         let a = if level > maxlevel { 
             4
         }else{
-            e.gen_range(0, 6)
+            e.gen_range(0, 8)
         };
         //print!("level {} ", l);
         macro_rules! NewNode {
@@ -139,14 +142,14 @@ impl Node {
             1 => NewNode!(Multiply),
             2 => NewNode!(Invert),
             3 => NewNode!(Negate),
-            4 => {
+            4 => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None},
+            _ => {
                 // Input node
                 let n = names.len() - 1; // -1 as last name/column is solution
                 let b = e.gen_range(0, n);
                 let s = names[b].clone();
                 Node{o:Operator::Terminal(TerminalType::Inputf64(s)), l:None, r:None}
             }
-            _ => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None}
         }
     }
     fn count_child_nodes(&self) -> usize {
@@ -294,7 +297,7 @@ impl Node {
         macro_rules! node_to_string2 {
             ($name:ident) => {
                 {
-                    for i in 0..level {
+                    for _ in 0..level {
                         ret.push_str(sp);
                     }
                     ret.push_str(stringify!($name) );
@@ -309,7 +312,7 @@ impl Node {
         macro_rules! node_to_string1 {
             ($name:ident) => {
                 {
-                    for i in 0..level {
+                    for _ in 0..level {
                         ret.push_str(sp);
                     }
                     ret.push_str(stringify!($name));
@@ -325,7 +328,7 @@ impl Node {
             Operator::Negate => node_to_string1!(Negate),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
-                for i in 0..level {
+                for _ in 0..level {
                     ret.push_str(sp);
                 }
                 ret.push_str(&format!("{}\n", f));
@@ -474,6 +477,7 @@ fn read_data() -> std::io::Result<Data> {
         ret.rows.push(hv);
         for i in 0..d.len() {
             let k = ret.names[i].clone();
+            //println!("d[{}] {}", i, d[i]);
             let v = d[i].parse::<f64>().unwrap();
             ret.rows[ln].insert(k, v);
         }
@@ -519,11 +523,45 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
     ret
 }
 
+
 // Calculate the score of a indvidual against the data
 // Param n: The individual
 // Param d: The data to use
 fn score_individual(n:&NodeBox, d:&Data) -> f64 {
     let mut scorev:Vec<f64> = vec![];
+    let mut inputs = Inputs{
+        dataf:HashMap::new(),
+    };
+
+    //println!("Evaluate {}", stt);
+    for r in d.rows.iter() {
+        for h in d.names.iter() {
+            let k = h.clone();
+            let v1 = r.get(&k);
+            let v:f64 = *v1.unwrap();
+            inputs.dataf.insert(k, v);
+        }
+        let e = n.evaluate(&inputs).unwrap();
+        // Get the target
+        let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
+        
+        scorev.push((e-t).abs());
+    }
+
+    // Take the inverse of the mean value of the score
+    let ret = 1.0/mean(&scorev[..]);
+
+    // Take the maximum - The worst result
+    // &scorev[..].sort_by(|a, b| {b.partial_cmp(&a).unwrap_or(Ordering::Equal)});
+
+    //println!("Sc! {} {}", scorev[0], scorev[scorev.len()-1]);
+    scorev[0].ln_1p()
+}
+
+// Do a simulation to evaluate a model.  Returns a vector of pairs.
+// The first element is true value the second is simulation result
+fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
+    let mut ret:Vec<(f64, f64)> = vec![];
     let mut inputs = Inputs{
         dataf:HashMap::new(),
     };
@@ -537,17 +575,190 @@ fn score_individual(n:&NodeBox, d:&Data) -> f64 {
         let e = n.evaluate(&inputs).unwrap();
         // Get the target
         let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
-        // Compare
-        scorev.push( 1.0/(e-t).abs());
+        ret.push((*t, e));
     }
-    // Take the mean value of the score
-    let ret = mean(&scorev[..]);
     ret
 }
 
+// Add a simulation to Simlations.txt.  First line is the IDs of the
+// data.  First column (labled ID 0) is the actual value.  Each column
+// is the matching data from the model with the ID at the top (FIXME
+// Comment!)
+fn add_simulation(data:Vec<(f64, f64)>, id:usize){
+    let fname = "Simulations.txt";
+    let mut contents = String::new();
+    // Create a string to hold final results    
+    let mut results = "".to_string();
+
+    {
+        
+        // Test if file exists.  If not create it
+        if ! Path::new(fname).exists() {
+            OpenOptions::new().write(true).create(true).open(fname).unwrap();
+        }
+        let  file = OpenOptions::new()
+            .read(true)
+            .open(fname).unwrap();
+        
+        // Get the data in to read
+        let mut buf_reader = BufReader::new(file);
+        buf_reader.read_to_string(&mut contents).unwrap();
+        if contents.len() == 0 {
+            // The file was empty Create the first column
+            contents.push_str("0 \n");
+            for ref d in data.clone() {
+                contents.push_str(format!("{} \n", d.0).as_str());
+            }
+        }
+        // Contents is now ready to have another data set appended
+
+        let mut lines = contents.lines();
+
+        // First test: The number of lines is the numebr of cases plus
+        // one for header.  This is the same for all simulations so
+        // data.len() == lines.count()-1
+        assert_eq!(data.len(), lines.count()-1);
+
+        // The test above consumed lines so reinitialise it
+        lines = contents.lines();
+        
+        // Set up the header
+        let mut header = lines.next().unwrap().to_string();
+
+        // Append the ID of this model and initialise results with it
+
+        header.push_str(format!("{}", id).as_str());
+        header.push(' ');
+        header.push('\n');
+
+        results.push_str(header.as_str());
+        // Going to loop over all the data from the file and through
+        // the data supplied in data simultaneously
+        let mut i = 0; // Index into data
+        for l in lines {
+            // Get the data members of this row
+            let mut d = l.split_whitespace();
+            let d0 = d.next().unwrap(); // The actual value as string
+            let d0u = d0.parse::<f64>().unwrap(); // The actual value as a number
+
+            // Test: The actual value here must be the same as the
+            // actual value in data[i].0
+            assert_eq!(d0u, data[i].0);
+
+            // Add the actual to this line
+            results.push_str(format!("{} ", d0).as_str());
+
+            // Put the rest of the line in results. FIXME There must
+            // be a variadic way to do this
+            loop {
+                match d.next() {
+                    Some(v) => results.push_str(format!("{} ", v).as_str()),
+                    None => break,
+                };
+            }
+            // Add in the new data
+            results.push_str(format!("{} \n", data[i].1).as_str());
+
+            i += 1;
+        }
+    }
+    // results now holds the new contents of the file
+    let mut file = OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .open(fname).unwrap();
+    file.write(&results.into_bytes()[..]).unwrap();
+}
+    
+
+struct Config {
+    // max_generations: usize,
+    // max_population: usize,
+    // cull_size: usize,
+    // crossover_percent: usize
+    data:HashMap<String, String>,
+}
+
+impl Config {
+    fn new()-> Config {
+        let file = File::open("config").unwrap();
+        let mut buf_reader = BufReader::new(file);
+        let mut contents = String::new();
+        buf_reader.read_to_string(&mut contents).unwrap();
+        let lines = contents.lines();
+        let mut config_hm = HashMap::new();
+        for line in lines {
+            let mut iter = line.split_whitespace();
+            let k = iter.next().unwrap();
+            let v = iter.collect::<String>();//::<String>;
+            config_hm.insert(k.to_string(), v.to_string());
+        }
+        Config{data:config_hm}
+    }
+    fn get_usize(&self, k:&str) -> Option<usize> {
+        match self.data.get(k) {
+            Some(v) => match v.parse::<usize>() {
+                Ok(v) => Some(v),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn get_string(&self, k:&str) -> Option<String> {
+        match self.data.get(k) {
+            Some(v) => Some(v.clone()),
+            _ => None,
+        }
+    }        
+}
+
+// Define a individual.  Consists of a node, a id, and a score.  Called
+// a Tree because it is not a sub-tree...
+type Tree = (usize, NodeBox, f64); 
+
+struct Recorder {
+    // Manage writing data to a file.  The constructor takes a file
+    // name and creates a buffered writer to the file.  Ha a "write"
+    // withod that sends data to that buffer for writing to the file.
+    // The SystemTime object is used to prefix the number of elapsed
+    // seconds to each record
+    buffer:BufWriter<File>,
+    created:SystemTime,
+}
+impl Recorder {
+    fn new(file_name:&str) -> Recorder {
+        Recorder{
+            buffer:BufWriter::new(OpenOptions::new()
+                                  .append(true)
+                                  .create(true)
+                                  .open(file_name).unwrap()),
+            created:SystemTime::now(),
+        }
+    }
+    fn write_line(&mut self, line:&str) {
+        let now = format!("{} ", self.created.elapsed().unwrap().as_secs());
+        self.buffer.write(&now.into_bytes()[..]).unwrap();
+        self.buffer.write(&line.to_string().into_bytes()[..]).unwrap();
+        self.buffer.write(&"\n".to_string().into_bytes()[..]).unwrap();
+    }
+}
+
+
+
 fn main() {
     println!("Start");
+    let config = Config::new();
 
+    let num_generations = config.get_usize("num_generations").unwrap();
+    let max_population =  config.get_usize("max_population").unwrap();
+    let initial_population =  config.get_usize("initial_population").unwrap();
+    let cull_size = config.get_usize("cull_size").unwrap();
+    let crossover_percent = config.get_usize("crossover_percent").unwrap();
+
+    // Set up output files
+    let mut generation_recorder = Recorder::new("Generations.txt");
+    let mut birth_death_recorder = Recorder::new("BirthsAndDeaths.txt");
+    
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
     // let mut e = Entropy::new(&[11,2,3,422, 195]);
@@ -556,53 +767,81 @@ fn main() {
     // Load the data
     let d:Data = read_data().unwrap();
 
-    // Create a population
-    // This is the root of a tree
-    type Tree = (u64, NodeBox, f64);
-    let mut population:Vec<(Tree)> = Vec::new();
+    // Create a population. The first part of the tuple is the set of
+    // trees that is the population.  The second part stores the
+    // string representation of every individual (Node::to_string())
+    // to keep duplicates out of the population
+    let mut population:(Vec<Tree>, HashMap<String, bool>) = (Vec::new(), HashMap::new());
+
     let mut maxid = 0; // Each tree as a ID
-    for _ in  1..25 {
-        maxid += 1;
+    loop {
         let n = Box::new(Node::new(&mut e, &d.names, 0));
-        let s = score_individual(&n, &d);
-        population.push((maxid, n, s));
+        let st = n.to_string();
+        population.1.entry(st.clone()).or_insert(false);
+        if !population.1.get(&st).unwrap() {
+            // This node is unique
+            maxid += 1;
+            population.1.insert(st, true);
+            let sc = score_individual(&n, &d);
+            {
+                birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
+            }
+            population.0.push((maxid, n, sc));
+        }
+        if population.0.len() == initial_population {
+            break;
+        }
     }
+    println!("Created initial population");
     // For each member of the population calculate a evaluation
-    let num_generations = 1500; // FIXME A configurable num_generations
+
     let mut best_id = 0;
     let mut best_individual = "".to_string();
     for generation in 0..num_generations {
-        print!("\r{}\t{}     ", generation, population.len()-1);
+        let s = format!("{} {} {} {} {}", generation, population.0[0].0, population.0[0].2, population.0.len(), population.0[0].1.to_string());
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
+        birth_death_recorder.buffer.flush().unwrap();
         // Filter out members of population that have no valid score (arithmetic error)
-        population = population.into_iter().filter(|x| {
+        population.0 = population.0.into_iter().filter(|x| {
             x.2.is_finite()
         }).collect();
         
-        // Sort population by score
-        &population[..].sort_by(|a, b| {
+        // Sort population by score, descending so the best are
+        // earliest.  Allows the less good individuals to be easilly
+        // pop'd off the end
+        &population.0[..].sort_by(|a, b| {
             let a2 = a.2;
             let b2 = b.2;
-            a2.partial_cmp(&b2).unwrap_or(Ordering::Equal)
+            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
         });
 
         // If the best individual has changed display it
-        let best_idx = population.len()-1;
-        let _best_id = population[best_idx].0;
+        let best_idx = 0;
+        let _best_id = population.0[best_idx].0;
         if _best_id != best_id {
             best_id = _best_id;
-            let this_individual = population[best_idx].1.to_string().clone();
+            let this_individual = population.0[best_idx].1.to_string().clone();
             if this_individual != best_individual {
                 best_individual = this_individual.clone();
-                println!("ID: {} Sc:{}\n{}\n",
-                         population[best_idx].0, population[best_idx].2, population[best_idx].1.to_pretty_string(0));
+                println!("G {} ID: {} Sc:{}\n{}\n",
+                         generation, population.0[best_idx].0, population.0[best_idx].2, population.0[best_idx].1.to_pretty_string(0));
+
+                // Best tree
+                let ref n = population.0[best_idx].1;
+
+                // ID to lable it
+                let lable = population.0[best_idx].0;
+
+                // Store its data
+                add_simulation(simulate(&n, &d), lable);
             }
         }
         
         let mut total_score = 0.0;
-        for x in population.iter() {
+        for x in population.0.iter() {
             total_score += x.2;
         }
-        let num_crossovers = 10; // FIXME A configurable num_crossovers
 
         // Choose a node from population to participate in crossover.
         // The higher the score the node got last generation the
@@ -611,7 +850,7 @@ fn main() {
         macro_rules! get_node {
             () => {
                 {
-                    let mut p:Option<&NodeBox> = None;
+                    let mut p:Option<usize> = None;
 
                     // The selector.  By setting the floor to more
                     // than 0 nodes with 0.0 score will not get
@@ -619,12 +858,11 @@ fn main() {
                     let s = e.gen_rangef64(0.000001, total_score);
                     
                     let mut cum_score = 0.0;
-                    for i in 0..population.len() {
-                        let t:&Tree = &population[i];
+                    for i in 0..population.0.len() {
+                        let t:&Tree = &population.0[i];
                         cum_score += t.2;
                         if cum_score >= s {
-                            let ref n1 = t.1;
-                            p = Some(n1);
+                            p = Some(i);
                             break;
                         }
                     }
@@ -632,23 +870,79 @@ fn main() {
                 }
             }
         };
-        for _ in 0..num_crossovers {
-            // Choose two trees to cross over
-            let pc; // Node resulting from crossover
-            {
-                let p0 = get_node!().unwrap();
-                let p1 = get_node!().unwrap();
 
-                pc = crossover(&p0, &p1, &mut e);
-                // println!("p0: {}", p0.to_string());
-                // println!("p1: {}", p1.to_string());
-                // println!("pc: {}", pc.to_string());
+        // The number of crossovers to do is (naturally)
+        // population.len() * crossover_percent/100
+        let ncross = population.0.len() * crossover_percent/100;
+        for _ in 0..ncross {
+            // Choose two trees to cross over
+            let  pc; // Node resulting from crossover
+            let i0 = get_node!().unwrap();
+            let i1 = get_node!().unwrap();
+            let mut flag = false;  // Set to true if pc is unique
+
+            let mut s = 0.0; // Score
+            {
+                // Block to limit scope of p0 and p1
+                let ref p0 = &population.0[i0];
+                let ref p1 = &population.0[i1];
+                pc = crossover(&p0.1, &p1.1, &mut e);
+                let st = pc.to_string();
+                population.1.entry(st.clone()).or_insert(false);
+                if !population.1.get(&st).unwrap() {
+                    // This node is unique
+                    population.1.insert(st, true);
+                    flag =  true;
+                }else{
+                }
+                    
+                if flag {
+                    maxid += 1;  // Done here so it can be passed to record_birth
+                    s = score_individual(&pc, &d);
+                    birth_death_recorder.write_line(&format!("{} + {} = {}/{}: {}", p0.0, p1.0, maxid, s, pc.to_string()));
+                }
             }
-            let s = score_individual(&pc, &d);
-            maxid += 1;
-            population.push((maxid, pc, s));
+            if flag {
+                //println!("Befoe score: {}  ", maxid);
+                population.0.push((maxid, pc, s));
+            }
         }
+        // Adjust population
+        if population.0.len() > max_population {
+            while population.0.len() > max_population {
+                for _ in 1..cull_size {
+                    let p = population.0.pop().unwrap();
+                    birth_death_recorder.write_line(&format!("RIP {}", p.0)[..]);
+                }
+            }
+            while population.0.len() < max_population {
+                let n = Box::new(Node::new(&mut e, &d.names, 0));
+                let st = n.to_string();
+                population.1.entry(st.clone()).or_insert(false);
+                if !population.1.get(&st).unwrap() {
+                    // This node is unique
+                    maxid += 1;
+                    population.1.insert(st, true);
+                    let sc = score_individual(&n, &d);
+                    {
+                        birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, s, n.to_string()));
+                    }
+                    population.0.push((maxid, n, sc));
+                }
+            }                
+        }
+        let mut hh:HashMap<String, usize> = HashMap::new();
+        for i in 0..population.0.len() {
+            let k = population.0[i].1.to_string();
+            let n = hh.entry(k).or_insert(0);
+            *n += 1;
+        }
+        
+        // for h in hh.keys() {
+        //     println!("TEST {} {}", hh.get(h.as_str()).unwrap(), h);
+        // }
+        //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
     }
-    println!("");
+    println!("Bye!");
 }
 
