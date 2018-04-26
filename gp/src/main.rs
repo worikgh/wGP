@@ -416,13 +416,19 @@ mod tests {
 }
 
 // Hold data for training or testing.
- struct Data {
+struct Data {
     
     // Names of the columns
     names:Vec<String>, 
 
     // Each row is a hash keyed by names FIXME Inefficient(?) use of memory
     rows:Vec<HashMap<String, f64>>, 
+    
+    // Indexes into rows for training data
+    training_i:Vec<usize>,
+
+    // Indexes into rows for testing data
+    testing_i:Vec<usize>,
 }
 
 impl Data {
@@ -440,12 +446,18 @@ impl Data {
     }
 }
 // Read in the data from a file
-fn read_data() -> std::io::Result<Data> {
-    // Must be in file 'data.in'.  First row is header
+fn read_data(f_name:&str , training_percent:usize, e:&mut Entropy) -> std::io::Result<Data> {
 
-    let mut ret = Data{names:Vec::<String>::new(), rows:Vec::<HashMap<String, f64>>::new()};
+    // Must be in file f_name.  First row is header
 
-    let file = File::open("Data.in")?;
+    let mut ret = Data{
+        names:Vec::<String>::new(),
+        rows:Vec::<HashMap<String, f64>>::new(),
+        testing_i:Vec::<usize>::new(),
+        training_i:Vec::<usize>::new(),
+    };
+
+    let file = File::open(f_name)?;
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
     buf_reader.read_to_string(&mut contents)?;
@@ -485,6 +497,15 @@ fn read_data() -> std::io::Result<Data> {
         ln += 1; 
     }
 
+    // Partition the data into training and testing sets
+    for i in 0..ret.rows.len() {
+        let z = e.gen_range(0, 100);
+        if z < training_percent {
+            ret.training_i.push(i);
+        }else{
+            ret.testing_i.push(i);
+        }
+    }
     Ok(ret)
 }
 
@@ -525,17 +546,24 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
 }
 
 
-// Calculate the score of a indvidual against the data
-// Param n: The individual
-// Param d: The data to use
-fn score_individual(n:&NodeBox, d:&Data) -> f64 {
+// Calculate the score of a indvidual against the data Param n: The
+// individual Param d: The data to use.  'use_testing' is true if the
+// individual is to be scored on the testing set
+fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     let mut scorev:Vec<f64> = vec![];
     let mut inputs = Inputs{
         dataf:HashMap::new(),
     };
 
     //println!("Evaluate {}", stt);
-    for r in d.rows.iter() {
+    let index:&Vec<usize>;
+    if use_testing {
+        index = &d.testing_i;
+    }else{
+        index = &d.training_i;
+    }
+    for i in index {
+        let ref r = d.rows[*i];
         for h in d.names.iter() {
             let k = h.clone();
             let v1 = r.get(&k);
@@ -567,7 +595,9 @@ fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
     let mut inputs = Inputs{
         dataf:HashMap::new(),
     };
-    for r in d.rows.iter() {
+    let ref index = d.testing_i;
+    for i in index {
+        let ref r = d.rows[*i];
         for h in d.names.iter() {
             let k = h.clone();
             let v1 = r.get(&k);
@@ -759,8 +789,10 @@ fn main() {
     let max_population =  config.get_usize("max_population").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
     let cull_size = config.get_usize("cull_size").unwrap();
+    let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     let crossover_percent = config.get_usize("crossover_percent").unwrap();
-
+    let data_file = config.get_string("data_file").unwrap();
+    
     // Set up output files
     let mut generation_recorder = Recorder::new("Generations.txt");
     let mut birth_death_recorder = Recorder::new("BirthsAndDeaths.txt");
@@ -771,11 +803,13 @@ fn main() {
     let mut e = Entropy::new(&[11,2,3,4]);
 
     // Load the data
-    let d:Data = read_data().unwrap();
+    let d_all:Data = read_data(data_file.as_str(), training_percent, &mut e).unwrap();
+
+    // Get the training set
     if let Some(ns) = config.get_string("eval") {
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
         let s = (*n).to_string();
-        println!("{} {}", s, score_individual(&n, &d));
+        println!("{} {}", s, score_individual(&n, &d_all, false));
         
     }else{
         
@@ -788,14 +822,14 @@ fn main() {
 
         let mut maxid = 0; // Each tree as a ID
         loop {
-            let n = Box::new(Node::new(&mut e, &d.names, 0));
+            let n = Box::new(Node::new(&mut e, &d_all.names, 0));
             let st = n.to_string();
             population.1.entry(st.clone()).or_insert(false);
             if !population.1.get(&st).unwrap() {
                 // This node is unique
                 maxid += 1;
                 population.1.insert(st, true);
-                let sc = score_individual(&n, &d);
+                let sc = score_individual(&n, &d_all, false);
                 {
                     birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
                 }
@@ -850,7 +884,7 @@ fn main() {
                     let lable = population.0[best_idx].0;
 
                     // Store its data
-                    add_simulation(simulate(&n, &d), lable);
+                    add_simulation(simulate(&n, &d_all), lable);
                 }
             }
             
@@ -914,7 +948,7 @@ fn main() {
                     
                     if flag {
                         maxid += 1;  // Done here so it can be passed to record_birth
-                        s = score_individual(&pc, &d);
+                        s = score_individual(&pc, &d_all, false);
                         birth_death_recorder.write_line(&format!("{} + {} = {}/{}: {}", p0.0, p1.0, maxid, s, pc.to_string()));
                     }
                 }
@@ -932,14 +966,14 @@ fn main() {
                     }
                 }
                 while population.0.len() < max_population {
-                    let n = Box::new(Node::new(&mut e, &d.names, 0));
+                    let n = Box::new(Node::new(&mut e, &d_all.names, 0));
                     let st = n.to_string();
                     population.1.entry(st.clone()).or_insert(false);
                     if !population.1.get(&st).unwrap() {
                         // This node is unique
                         maxid += 1;
                         population.1.insert(st, true);
-                        let sc = score_individual(&n, &d);
+                        let sc = score_individual(&n, &d_all, false);
                         {
                             birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, s, n.to_string()));
                         }
