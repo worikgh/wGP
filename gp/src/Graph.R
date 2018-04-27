@@ -1,21 +1,12 @@
 data <- read.table('Simulations.txt', header=TRUE)
-names(data)
-summary(data)
-plot(data[,"X0"], cex=.5)
-points(data[,2], col=2, cex=.25)
-points(data[,3], col=3, cex=.25)
-points(data[,4], col=4, cex=.25)
-points(data[,5], col=5, cex=.25)
-points(data[,6], col=6, cex=.25)
-points(data[,7], col=7, cex=.25)
-points(data[,8], col=2, cex=.25)
-points(data[,9], col=2, cex=.25)
-points(data[,10], col=2, cex=.25)
+names <- names(data)
 
-for (c in names(data)) {
-    points(data[,c], col=n)
-    n <- n+1
-}
-summary(data[,-1] - data[,1])
+objective <- data[,1]
+best.estimate <- data[,names[length(names)]]
+oldpar <- par(mfrow=c(2,2))
+ratio <- 100*(objective-best.estimate)/objective
 
-data2 <- read.table('/tmp/g.txt', header=FALSE)
+plot(x=data[,"X0"], y=best.estimate, cex=.2, ylab="Estimate", xlab="Actual", main="Best Model")
+hist(ratio, main="Error Ratio", density=10, xlab="Percent Error", freq=FALSE)
+hist(objective, main="Objective Data", density=10, breaks=30, xlab="Age")
+hist(objective-best.estimate, main="Differences", density=10, freq=FALSE, breaks=30)
