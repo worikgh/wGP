@@ -3,3 +3,5 @@ initial_population 1000
 max_population 10000
 cull_size 500
 crossover_percent 50
+training_percent 80
+data_file Data.in
