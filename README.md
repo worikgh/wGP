@@ -1,8 +1,8 @@
 # Genetic Programming - Again #
 
-A system for automatically writing computer programmes.
+A system for automatically finding functions.
 
-A programme is expressed recursively as a tree.  
+A function is expressed recursively as a tree.  
 
 ```rust
  struct Node {
@@ -13,29 +13,39 @@ A programme is expressed recursively as a tree.
  }
 ```
 
-Operators implemented:
+## Operators implemented ##
 
-* Terminals
+* Terminals All terminals are implemented as floating point values.
+  On terminal nodes `Node::l`, `Node::r` and `Node::d` are null.
 
-  All terminals are implemented as floating point values
+** Inputs. From the domain of the function.
 
-** Inputs 
+** Constants.
 
-** Constants
+* Arity one functions. Apply to `Node::l`. `Node::r` and `Node::d` are null.
 
+** Invert. Returns one over the value of `l`.
 
+** Negate. Returns negative one times 'l'
 
+* Arity two functions. Apply to `Node::l` and `Node::r`. `Node::d` is null
 
-The terminals are restricted to floats for  simplicity.
+** Multiply. Returns `l` times `r`.
 
-Operators are Addition, Multiplication, Inversion and Negation. 
+** Gt. If the value of `l` is greater than the value of 'r return 1.
+   Otherwise return -1
 
-Programmes are expressed as trees
+** Lt. If the value of `l` is less than the value of 'r return 1.
+   Otherwise return -1
 
-Operators can be terminals (inputs or constants), arity one e.g.,
-invert, arity to e.g., multiplication or arity three e.g., division
-(condition, true branch, false branch).  Node::l, Node::r, Node::d are
-the zero to three subtrees depending on the operator.
+** Addition. Returns `l` plus `r`
+
+* Arity three functions.  Apply to `Node::l` and `Node::r`, and
+  `Node::d`
+
+** If. Calculate the value or 'd'.  If that is less than or equal to
+   zero return the value of `l`, otherwise the value of `r`
+
 
 
            
