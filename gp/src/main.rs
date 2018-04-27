@@ -46,7 +46,10 @@ enum Operator {
     Add,  
     Multiply,
     Invert, // ??! Invert 0.0?
-    Negate, 
+    Negate,
+    If,
+    Gt, // >
+    Lt, // <
     Terminal(TerminalType),
 }
 
@@ -57,6 +60,7 @@ struct Node {
     o:Operator,
     l:Option<NodeBox>,
     r:Option<NodeBox>,
+    d:Option<NodeBox>, // The decision leg for if
 }
 
 // The source of entropy that is passed to trees to create themselves.
@@ -92,6 +96,9 @@ impl Node {
             "Multiply" => Operator::Multiply,
             "Invert" => Operator::Invert,
             "Negate" => Operator::Negate,
+            "If" => Operator::If,
+            "Gt" => Operator::Gt,
+            "Lt" => Operator::Lt,
             "Float" =>
             {
                 let s = iter.next().unwrap();
@@ -106,12 +113,18 @@ impl Node {
             _ => Some(NodeBox::new(Node::new_from_iter(iter))),
         };
         let r = match operator {
-            Operator::Add|Operator::Multiply =>
+            Operator::Add|Operator::Multiply|Operator::If|
+            Operator::Gt|Operator::Lt =>
+                Some(NodeBox::new(Node::new_from_iter(iter))),
+            _ => None,
+        };
+        let d = match operator {
+            Operator::If =>
                 Some(NodeBox::new(Node::new_from_iter(iter))),
             _ => None,
         };
                 
-        Node{o:operator, l:l, r:r}
+        Node{o:operator, l:l, r:r, d:d}
     }    // Build a random tree
     /* Paramaters:
      * Entropy - A source of randomness
@@ -124,31 +137,39 @@ impl Node {
         // FIXME Make this max levela configurable constant
         let maxlevel = 10;
         let a = if level > maxlevel { 
-            4
+            0
         }else{
-            e.gen_range(0, 8)
+            e.gen_range(0, 18)
         };
+
         //print!("level {} ", l);
         macro_rules! NewNode {
             ($name:ident) => {
                 Node{o:Operator::$name,
                      l: Some(Box::new(Node::new(e , names, l))),
-                     r: Some(Box::new(Node::new(e, names, l)))
+                     r: Some(Box::new(Node::new(e, names, l))),
+                     d: Some(Box::new(Node::new(e, names, l))),
                 }
             }
         };
         match a {
-            0 => NewNode!(Add),
+            0 => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None, d:None},
             1 => NewNode!(Multiply),
-            2 => NewNode!(Invert),
+            2 => {
+                let n = NewNode!(Invert);
+                n
+            },
             3 => NewNode!(Negate),
-            4 => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None},
+            4 => NewNode!(If),
+            5 => NewNode!(Gt),
+            6 => NewNode!(Lt),
+            7 => NewNode!(Add),
             _ => {
                 // Input node
                 let n = names.len() - 1; // -1 as last name/column is solution
                 let b = e.gen_range(0, n);
                 let s = names[b].clone();
-                Node{o:Operator::Terminal(TerminalType::Inputf64(s)), l:None, r:None}
+                Node{o:Operator::Terminal(TerminalType::Inputf64(s)), l:None, r:None, d:None}
             }
         }
     }
@@ -212,6 +233,9 @@ impl Node {
                 Operator::Multiply => Operator::Multiply,
                 Operator::Invert => Operator::Invert,
                 Operator::Negate => Operator::Negate,
+                Operator::If => Operator::If,
+                Operator::Gt => Operator::Gt,
+                Operator::Lt => Operator::Lt,
                 Operator::Terminal(ref t) => match *t{
                     TerminalType::Float(f) => Operator::Terminal(TerminalType::Float(f)),
                     TerminalType::Inputf64(ref s) => Operator::Terminal(TerminalType::Inputf64(s.clone())),
@@ -224,6 +248,10 @@ impl Node {
             r:match self.r {
                 Some(ref r) => Some(r.copy()),
                  None => None,
+            },
+            d:match self.d {
+                Some(ref d) => Some(d.copy()),
+                None => None,
             },
         };
         NodeBox::new(ret)
@@ -243,6 +271,18 @@ impl Node {
         };
         
 
+        // Macro to make a three child  node into a string
+        macro_rules! node_to_string3 {
+            ($name:ident) => {
+                {
+                    ret.push_str(stringify!($name) );
+                    ret.push_str(" ");
+                    child_to_string!(l);
+                    child_to_string!(r);
+                    child_to_string!(d);
+                }
+            }
+        };
         // Macro to make a two child  node into a string
         macro_rules! node_to_string2 {
             ($name:ident) => {
@@ -267,8 +307,13 @@ impl Node {
         };
         
         match self.o {
+            Operator::If => {
+                node_to_string3!(If)
+            },
             Operator::Add => node_to_string2!(Add),
             Operator::Multiply => node_to_string2!(Multiply),
+            Operator::Gt => node_to_string2!(Gt),
+            Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
@@ -293,6 +338,22 @@ impl Node {
         };
         
 
+        // Macro to make a three child  node into a string
+        macro_rules! node_to_string3 {
+            ($name:ident) => {
+                {
+                    for _ in 0..level {
+                        ret.push_str(sp);
+                    }
+                    ret.push_str(stringify!($name) );
+                    ret.push_str("\n");
+                    child_to_string!(l);
+                    child_to_string!(r);
+                    child_to_string!(d);
+                }
+            }
+        };
+
         // Macro to make a two child  node into a string
         macro_rules! node_to_string2 {
             ($name:ident) => {
@@ -323,8 +384,11 @@ impl Node {
         };
         
         match self.o {
+            Operator::If => node_to_string3!(If),
             Operator::Add => node_to_string2!(Add),
             Operator::Multiply => node_to_string2!(Multiply),
+            Operator::Gt => node_to_string2!(Gt),
+            Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
@@ -355,6 +419,34 @@ impl Node {
             Operator::Terminal(TerminalType::Float(f)) => Some(f),
             Operator::Terminal(TerminalType::Inputf64(ref s)) => 
                 Some(*(inputs.dataf.get(s).unwrap())),
+            Operator::If => {
+                let d = evaluate!(d);
+                let e:f64;
+                if d <= 0.0 {
+                    e = evaluate!(l);
+                }else{
+                    e = evaluate!(r);
+                }
+                Some(e)
+            },
+            Operator::Lt => {
+                let left = evaluate!(l);
+                let right = evaluate!(r);
+                if left < right {
+                    Some(1.0)
+                }else{
+                    Some(-1.0)
+                }
+            },
+            Operator::Gt => {
+                let left = evaluate!(l);
+                let right = evaluate!(r);
+                if left > right {
+                    Some(1.0)
+                }else{
+                    Some(-1.0)
+                }
+            },
             Operator::Add => {
                 let left = evaluate!(l);
                 let right = evaluate!(r);
@@ -839,7 +931,6 @@ fn main() {
     // Load the data
     let d_all:Data = read_data(data_file.as_str(), training_percent, &mut e).unwrap();
 
-    // Get the training set
     if let Some(ns) = config.get_string("eval") {
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
         let s = (*n).to_string();
@@ -852,6 +943,7 @@ fn main() {
         // trees that is the population.  The second part stores the
         // string representation of every individual (Node::to_string())
         // to keep duplicates out of the population
+        println!("Population start");
         let mut population:(Vec<Tree>, HashMap<String, bool>) = (Vec::new(), HashMap::new());
 
         let mut maxid = 0; // Each tree as a ID
