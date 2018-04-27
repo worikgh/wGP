@@ -395,16 +395,25 @@ mod tests {
         // Load the data
         let d_all:Data =
             read_data(data_file.as_str(), 0, &mut e).unwrap();
-        println!("training set size: {}", d_all.training_i.len()); 
         assert_eq!(d_all.training_i.len(), 0);
+
         let d_all:Data =
             read_data(data_file.as_str(), 100, &mut e).unwrap();
-        println!("testing set size: {}", d_all.testing_i.len()); 
         assert_eq!(d_all.testing_i.len(), 0);
+
         let d_all:Data =
             read_data(data_file.as_str(), 50, &mut e).unwrap();
         assert_ne!(d_all.testing_i.len(), 0);
         assert_ne!(d_all.training_i.len(), 0);
+
+        let d_all:Data =
+            read_data(data_file.as_str(), 10, &mut e).unwrap();
+        assert!(d_all.training_i.len()< d_all.testing_i.len(), 0);
+
+        let d_all:Data =
+            read_data(data_file.as_str(), 90, &mut e).unwrap();
+        assert!(d_all.training_i.len() > d_all.testing_i.len(), 0);
+
     }
     #[test]
     fn test_node_eval(){
