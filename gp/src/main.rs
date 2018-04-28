@@ -742,8 +742,7 @@ fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
 // data.  First column (labled ID 0) is the actual value.  Each column
 // is the matching data from the model with the ID at the top (FIXME
 // Comment!)
-fn add_simulation(data:Vec<(f64, f64)>, id:usize){
-    let fname = "Simulations.txt";
+fn add_simulation(data:Vec<(f64, f64)>, id:usize, fname:&str){
     let mut contents = String::new();
     // Create a string to hold final results    
     let mut results = "".to_string();
@@ -875,6 +874,38 @@ impl Config {
     }        
 }
 
+/// rite out R script to generate plit of results
+fn write_plotting_script(input_data:&str, xlab:&str,
+                         outfile:&str, r_script_file:&str) {
+    let mut script ="
+data <- read.table('SIMULATIONS', header=TRUE)
+names <- names(data)
+
+objective <- data[,1]
+best.estimate <- data[,names[length(names)]]
+png(filename=\"OUTFILE\", width=210, height=297, units=\"mm\", res=600)
+oldpar <- par(mfrow=c(2,2))
+ratio <- 100*(objective-best.estimate)/objective
+
+plot(x=data[,\"X0\"], y=best.estimate, cex=.2, ylab=\"Estimate\", xlab=\"Actual\", main=\"Best Model\")
+hist(ratio, main=\"Error Ratio\", density=10, xlab=\"Percent Error\", freq=FALSE)
+hist(objective, main=\"Objective Data\", density=10, breaks=30, xlab=\"XLAB\")
+hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, breaks=30)
+dev.off()
+";
+    let script = script.replace("SIMULATIONS", input_data);
+    let script = script.as_str().replace("XLAB", xlab).to_string();
+    let script = script.as_str().replace("OUTFILE", outfile).to_string();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(r_script_file).unwrap();
+    
+    let mut writer = BufWriter::new(&file);
+    writer.write_all(script.to_string().as_bytes()).unwrap();
+}
+
 // Define a individual.  Consists of a node, a id, and a score.  Called
 // a Tree because it is not a sub-tree...
 type Tree = (usize, NodeBox, f64); 
@@ -918,7 +949,10 @@ fn main() {
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     let crossover_percent = config.get_usize("crossover_percent").unwrap();
     let data_file = config.get_string("data_file").unwrap();
-    
+    let model_data_file = config.get_string("model_data_file").unwrap();
+    let plot_xlab = config.get_string("plot_xlab").unwrap();
+    let plot_file = config.get_string("plot_file").unwrap();
+    let r_script_file = config.get_string("r_script_file").unwrap();
     // Set up output files
     let mut generation_recorder = Recorder::new("Generations.txt");
     let mut birth_death_recorder = Recorder::new("BirthsAndDeaths.txt");
@@ -1010,7 +1044,8 @@ fn main() {
                     let lable = population.0[best_idx].0;
 
                     // Store its data
-                    add_simulation(simulate(&n, &d_all), lable);
+                    add_simulation(simulate(&n, &d_all), lable,
+                                   model_data_file.as_str());
                 }
             }
             
@@ -1119,6 +1154,10 @@ fn main() {
             // }
             //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
         }
+        write_plotting_script(model_data_file.as_str(),
+                              plot_xlab.as_str(),
+                              plot_file.as_str(),
+                              r_script_file.as_str());
         println!("Bye!");
     }
 
