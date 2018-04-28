@@ -82,19 +82,19 @@ The format is:
 
 ### training_percent ###
 
-    The data supplied for the simulation is divided into traing and
+    The data supplied for the simulation is divided into training and
     testing.  This sets the percentage of data used to train the
     model.  During model development the training data is used.  When
-    a new model that peforms best in the training data is discovered
+    a new model that performs best in the training data is discovered
     it is run against the testing data and the results recorded
 
     Example: training_percent 80
 
 ### data_file ###
 
-    The file name of the training and testing data.  Comma seperated
+    The file name of the training and testing data.  Comma separated
     line per record.  The first line is the field names (these
-    constitute the inputs to teh generated functions).  The last
+    constitute the inputs to the generated functions).  The last
     column is the objective value.
 
     Example: data_file Abalone.in
@@ -102,16 +102,16 @@ The format is:
 ### model_data_file ###
 
     The name of the file that records the simulations of the functions
-    as they are discoverd Each time a fiunction is developped that
-    peforms better than any other discovered so far it is simulated
+    as they are discovered Each time a function is developed that
+    performs better than any other discovered so far it is simulated
     using the testing data and the results are recorded here
 
     Example: model_data_file Abalone.txt
 
 ### r_script_file ###
 
-    At the end of the simulaton a R script is written out that will
-    generate raphs summerising the simulation.  This names that
+    At the end of the simulation a R script is written out that will
+    generate graphs summarising the simulation.  This names that
     file.
 
     Example: r_script_file Abalone.R
@@ -124,10 +124,20 @@ The format is:
 
 ### plot_xlab ###
 
+    The name of the objective to use on the x-label
+
+    Example: plot_xlab Abalone Age
+
 ### generations_file ###
+
+    The name of the file out to which a line is written every
+    generation
 
     Example: generations_file AbaloneGenerations.txt
 
 ### birthsanddeaths_file ###
+
+    Every individual has a line in this file when it is created and
+    when it is destroyed.
 
     Example: birthsanddeaths_file AbaloneBirthsAndDeaths.txt
