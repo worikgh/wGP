@@ -45,7 +45,7 @@ A function is expressed recursively as a tree.
 ## Configuration File
 
 The simulation is defined using a configuration file.  The file name
-is passed as the only argument `./gp <coniguration file name`.
+is passed as the only argument.
 
 The format is:
 
@@ -55,20 +55,20 @@ The format is:
 
     The number of generations to simulate 
 
-    Example: `num_generations 20000`
+    Example: num_generations 20000
 
 ### initial_population ###
 
     The number of random individuals to initialise the population
     with.
 
-    Example: `initial_population 2000`
+    Example: initial_population 2000
 
 ### max_population ###
 
     The maximum size the population will grow to.
 
-    Example: `max_population 10000`
+    Example: max_population 10000
 
 ### crossover_percent ###
 
@@ -78,7 +78,7 @@ The format is:
     added if they are not already in the population, duplicates are
     not allowed in the population.
 
-    Example: `crossover_percent 50`
+    Example: crossover_percent 50
 
 ### training_percent ###
 
@@ -88,7 +88,7 @@ The format is:
     a new model that peforms best in the training data is discovered
     it is run against the testing data and the results recorded
 
-    Example: `training_percent 80`
+    Example: training_percent 80
 
 ### data_file ###
 
@@ -97,7 +97,7 @@ The format is:
     constitute the inputs to teh generated functions).  The last
     column is the objective value.
 
-    Example: `data_file Abalone.in`
+    Example: data_file Abalone.in
     
 ### model_data_file ###
 
@@ -106,28 +106,28 @@ The format is:
     peforms better than any other discovered so far it is simulated
     using the testing data and the results are recorded here
 
-    Example: `model_data_file Abalone.txt`
+    Example: model_data_file Abalone.txt
 
 ### r_script_file ###
 
-    At the end of the simulaton a `R` script is written out that will
+    At the end of the simulaton a R script is written out that will
     generate raphs summerising the simulation.  This names that
     file.
 
-    Example: `r_script_file Abalone.R`
+    Example: r_script_file Abalone.R
 
 ### plot_file ###
 
-    The name of the graphic file that the `R` script generates.
+    The name of the graphic file that the R script generates.
 
-    Example: `plot_file Abalone.png`
+    Example: plot_file Abalone.png
 
 ### plot_xlab ###
 
 ### generations_file ###
 
-    Example: `generations_file AbaloneGenerations.txt`
+    Example: generations_file AbaloneGenerations.txt
 
 ### birthsanddeaths_file ###
 
-    Example: `birthsanddeaths_file AbaloneBirthsAndDeaths.txt`
+    Example: birthsanddeaths_file AbaloneBirthsAndDeaths.txt
