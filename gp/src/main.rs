@@ -1,6 +1,7 @@
 extern crate rand;
 extern crate statistical;
 
+use std::env;
 use std::path::Path;
 use std::time::SystemTime;
 use rand::Rng;
@@ -837,8 +838,8 @@ struct Config {
 }
 
 impl Config {
-    fn new()-> Config {
-        let file = File::open("config").unwrap();
+    fn new(cfg_file:&str)-> Config {
+        let file = File::open(cfg_file).unwrap();
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
         buf_reader.read_to_string(&mut contents).unwrap();
@@ -877,7 +878,7 @@ impl Config {
 /// rite out R script to generate plit of results
 fn write_plotting_script(input_data:&str, xlab:&str,
                          outfile:&str, r_script_file:&str) {
-    let mut script ="
+    let  script ="
 data <- read.table('SIMULATIONS', header=TRUE)
 names <- names(data)
 
@@ -896,7 +897,7 @@ dev.off()
     let script = script.replace("SIMULATIONS", input_data);
     let script = script.as_str().replace("XLAB", xlab).to_string();
     let script = script.as_str().replace("OUTFILE", outfile).to_string();
-    let mut file = OpenOptions::new()
+    let  file = OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
@@ -941,7 +942,17 @@ impl Recorder {
 
 fn main() {
     println!("Start");
-    let config = Config::new();
+
+    let args: Vec<_> = env::args().collect();
+    let cfg_file:String;
+    if args.len() > 1 {
+        cfg_file = args[1].clone();
+    }else{
+        cfg_file = "config".to_string();
+    }
+    
+
+    let config = Config::new(cfg_file.as_str());
     let num_generations = config.get_usize("num_generations").unwrap();
     let max_population =  config.get_usize("max_population").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
@@ -953,9 +964,14 @@ fn main() {
     let plot_xlab = config.get_string("plot_xlab").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
     let r_script_file = config.get_string("r_script_file").unwrap();
+    let generations_file = config.get_string("generations_file").unwrap();
+    let birthsanddeaths_file =
+        config.get_string("birthsanddeaths_file").unwrap();
+
     // Set up output files
-    let mut generation_recorder = Recorder::new("Generations.txt");
-    let mut birth_death_recorder = Recorder::new("BirthsAndDeaths.txt");
+    let mut generation_recorder = Recorder::new(generations_file.as_str());
+    let mut birth_death_recorder =
+        Recorder::new(birthsanddeaths_file.as_str());
 
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
@@ -1014,6 +1030,11 @@ fn main() {
             birth_death_recorder.buffer.flush().unwrap();
             // Filter out members of population that have no valid score (arithmetic error)
             population.0 = population.0.into_iter().filter(|x| {
+                if !x.2.is_finite() {
+                    birth_death_recorder.write_line(
+                        &format!("Individual died natural cuses: {}", x.0)
+                    );
+                }
                 x.2.is_finite()
             }).collect();
             
