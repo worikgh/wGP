@@ -45,6 +45,7 @@ impl fmt::Display for TerminalType {
 // The operations that are implemented
 enum Operator {
     Add,  
+    Log,  
     Multiply,
     Invert, // ??! Invert 0.0?
     Negate,
@@ -94,6 +95,7 @@ impl Node {
         
         let operator = match iter.next().unwrap() {
             "Add" => Operator::Add,
+            "Log" => Operator::Log,
             "Multiply" => Operator::Multiply,
             "Invert" => Operator::Invert,
             "Negate" => Operator::Negate,
@@ -165,6 +167,7 @@ impl Node {
             5 => NewNode!(Gt),
             6 => NewNode!(Lt),
             7 => NewNode!(Add),
+            8 => NewNode!(Log),
             _ => {
                 // Input node
                 let n = names.len() - 1; // -1 as last name/column is solution
@@ -231,6 +234,7 @@ impl Node {
             // FIXME Why not: o:self.o,
             o:match self.o {
                 Operator::Add => Operator::Add,
+                Operator::Log => Operator::Log,
                 Operator::Multiply => Operator::Multiply,
                 Operator::Invert => Operator::Invert,
                 Operator::Negate => Operator::Negate,
@@ -316,6 +320,7 @@ impl Node {
             Operator::Gt => node_to_string2!(Gt),
             Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
+            Operator::Log => node_to_string1!(Log),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
                 ret.push_str(&format!("{}", f));
@@ -391,6 +396,7 @@ impl Node {
             Operator::Gt => node_to_string2!(Gt),
             Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
+            Operator::Log => node_to_string1!(Log),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
                 for _ in 0..level {
@@ -461,6 +467,10 @@ impl Node {
             Operator::Negate => {
                 let left = evaluate!(l);
                 Some(-1.0*left)
+            },
+            Operator::Log => {
+                let left = evaluate!(l);
+                Some(left.ln())
             },
             Operator::Invert => {
                 let left = evaluate!(l);
@@ -832,7 +842,6 @@ fn add_simulation(data:Vec<(f64, f64)>, id:usize, fname:&str){
 struct Config {
     // max_generations: usize,
     // max_population: usize,
-    // cull_size: usize,
     // crossover_percent: usize
     data:HashMap<String, String>,
 }
@@ -956,7 +965,6 @@ fn main() {
     let num_generations = config.get_usize("num_generations").unwrap();
     let max_population =  config.get_usize("max_population").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
-    let cull_size = config.get_usize("cull_size").unwrap();
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     let crossover_percent = config.get_usize("crossover_percent").unwrap();
     let data_file = config.get_string("data_file").unwrap();
@@ -984,7 +992,7 @@ fn main() {
     if let Some(ns) = config.get_string("eval") {
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
         let s = (*n).to_string();
-        println!("{} {}", s, score_individual(&n, &d_all, false));
+        println!("{} {}", s, score_individual(&n, &d_all, true));
         
     }else{
         
@@ -1142,10 +1150,8 @@ fn main() {
             // Adjust population
             if population.0.len() > max_population {
                 while population.0.len() > max_population {
-                    for _ in 1..cull_size {
-                        let p = population.0.pop().unwrap();
-                        birth_death_recorder.write_line(&format!("RIP {}", p.0)[..]);
-                    }
+                    let p = population.0.pop().unwrap();
+                    birth_death_recorder.write_line(&format!("RIP {}", p.0)[..]);
                 }
                 while population.0.len() < max_population {
                     let n = Box::new(Node::new(&mut e, &d_all.names, 0));
