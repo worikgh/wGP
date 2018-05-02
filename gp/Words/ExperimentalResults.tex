@@ -1,0 +1,309 @@
+\documentclass[a4paper,twoside]{article}
+\usepackage{fancyhdr}
+\usepackage{amssymb,amsmath}
+\usepackage{subcaption} % floats in floats
+\pagestyle{fancy}
+\lhead{}
+\chead{}
+\rhead{\bfseries Genetic Programming 2018}
+\lfoot{Worik Turei Stanton}
+
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\renewcommand{\baselinestretch}{1.5} % one and a half spacing
+\usepackage{graphicx}
+\usepackage{url}
+
+\title{Genetic Programming}
+\author{Worik Turei Stanton}
+\begin{document}
+
+\begin{enumerate}
+  \item Record seconds per generation for each simulation
+\section{Introduction}
+
+Answer some questions about Genetic Programming.
+
+\begin{enumerate}
+\item How does population size relate to performance?
+\item How much need is there for mutation?
+\item What sorts of problems can be solved?
+\end{enumerate}
+
+\section{Abalone}
+
+\url{https://archive.ics.uci.edu/ml/datasets/abalone}
+
+\begin{quote}
+  Predicting the age of abalone from physical measurements. The age of
+  abalone is determined by cutting the shell through the cone, staining
+  it, and counting the number of rings through a microscope -- a boring
+  and time-consuming task. Other measurements, which are easier to
+  obtain, are used to predict the age....
+\end{quote}
+
+\begin{quote}
+  Abalone (via Spanish abul\'{o}n, from Rumsen aul\'{o}n) is a common name for
+  any of a group of small to very large sea snails, marine gastropod
+  molluscs in the family Haliotidae. 
+\end{quote}
+\url{https://en.wikipedia.org/wiki/Abalone}
+
+\subsection{Attributes}
+
+\begin{table}[h]
+  \begin{tabular}{llll}
+    Name & Data Type & Meas. & Description\\
+    \hline
+    Sex &  nominal & &  M, F, and I (infant)\\
+    Length & continuous & mm &  Longest shell measurement\\
+    Diameter & continuous & mm &  perpendicular to length\\
+    Height & continuous & mm &  with meat in shell\\
+    Whole weight & continuous & grams & whole abalone\\
+    Shucked weight & continuous & grams & weight of meat\\
+    Viscera weight & continuous & grams & gut weight (after bleeding)\\
+    Shell weight & continuous & grams & after being dried\\
+    Rings & integer && +1.5 gives the age in years\\
+  \end{tabular}
+  \label{tab:abalone.parameters}
+  \caption{The attributes.  The last one, \emph{Rings}, is the
+    objective to predict }
+\end{table}
+
+\subsubsection{Sex}
+
+The sex of the fish is a nominal value in $\{M, F, I\}$.  Given
+that the Genetic Programming system uses floating point data the
+sex will have to be either ignored or re-coded.
+
+Here two approaches will be used:
+\begin{enumerate}
+\item As a factor.  Three mutually exclusive flags with one of
+  three variables set to $1$ and the other two to $0$
+\item Encode sex as $F\Rightarrow-1,\ I\Rightarrow0, M\Rightarrow1$
+\end{enumerate}
+
+
+\subsubsection{Objective}
+
+The objective is the age of the fish.  In some
+studies\footnote{E.g., see
+  \url{http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.14.2321&rep=rep1&type=pdf}}
+the age is divided into three classes making this a classification
+problem.
+
+\begin{tabular}[h]{|ll|}
+  \hline
+  Rings  &                      Age\\
+  0-8    &                    Young\\
+  9-14   &                    Adult\\
+  15-29  &                    Old \\
+  \hline
+\end{tabular}
+
+Encode as
+
+\begin{tabular}[h]{lcl}
+  -1 &$\Rightarrow$& Young\\
+  0 & $\Rightarrow$ & Adult\\
+  1 &  $\Rightarrow$  & Old\\
+\end{tabular}
+
+
+Here both approaches will be used
+
+
+\subsection{Experimental Setup}
+
+Given two encodings of sex, and two of the objective function there
+will be four simulation runs.
+
+\begin{description}
+\item[Abalone1C] Continuous objective, sex as factor.  See table
+  \ref{tab:sample.data.1C} for a sample
+\item[Abalone2C]  Objective as classes, sex as factor.  See table
+  \ref{tab:sample.data.2C} for a sample
+\item[Abalone1N] Continuous objective, sex encoded.  See table
+  \ref{tab:sample.data.1N} for a sample
+\item[Abalone2N]  Objective as classes, sex encoded.  See table
+  \ref{tab:sample.data.2N} for a sample
+  
+\end{description}
+
+\begin{table}
+  \begin{tabular}{lllllllllll}
+    F & I & M & Length & Diameter & Height & W.Weight & S.Weight & V.Weight & Sh.Weight & Age \\
+    0 & 0 & 1 & 0.455 & 0.365 & 0.095 & 0.514 & 0.2245 & 0.101 & 0.15 & 15 \\
+    0 & 0 & 1 & 0.35 & 0.265 & 0.09 & 0.2255 & 0.0995 & 0.0485 & 0.07 & 7 \\
+    1 & 0 & 0 & 0.53 & 0.42 & 0.135 & 0.677 & 0.2565 & 0.1415 & 0.21 & 9 \\
+  \end{tabular}
+  \label{tab:sample.data.1C}
+  \caption{Sample data for \textbf{Abalone1C}}
+\end{table}
+
+
+\begin{table}
+  \begin{tabular}{lllllllllll}
+    F & I & M & Length & Diameter & Height & W.Weight & S.Weight & V.Weight & Sh.Weight & O2 \\
+    0 & 0 & 1 & 0.455 & 0.365 & 0.095 & 0.514 & 0.2245 & 0.101 & 0.15 & 1 \\
+    0 & 0 & 1 & 0.35 & 0.265 & 0.09 & 0.2255 & 0.0995 & 0.0485 & 0.07 & -1 \\
+    1 & 0 & 0 & 0.53 & 0.42 & 0.135 & 0.677 & 0.2565 & 0.1415 & 0.21 & 0 \\
+  \end{tabular}
+  \label{tab:sample.data.2N}
+  \caption{Sample data for \textbf{Abalone2N}}
+\end{table}
+
+\begin{table}
+  \begin{tabular}{lllllllll}
+    Sex & Length & Diameter & Height & W.Weight & S.Weight & V.Weight & Sh.Weight & O1 \\
+    1 & 0.455 & 0.365 & 0.095 & 0.514 & 0.2245 & 0.101 & 0.15 & 15 \\
+    1 & 0.35 & 0.265 & 0.09 & 0.2255 & 0.0995 & 0.0485 & 0.07 & 7 \\
+    -1 & 0.53 & 0.42 & 0.135 & 0.677 & 0.2565 & 0.1415 & 0.21 & 9 \\
+  \end{tabular}
+  \label{tab:sample.data.1N}
+  \caption{Sample data for \textbf{Abalone1N}}
+\end{table}
+
+\begin{table}
+  \begin{tabular}{lllllllll}
+    Sex.1 & Length & Diameter & Height & W.Weight & S.Weight & V.Weight & Sh.Weight & O2 \\
+    1 & 0.455 & 0.365 & 0.095 & 0.514 & 0.2245 & 0.101 & 0.15 & 1 \\
+    1 & 0.35 & 0.265 & 0.09 & 0.2255 & 0.0995 & 0.0485 & 0.07 & -1 \\
+    -1 & 0.53 & 0.42 & 0.135 & 0.677 & 0.2565 & 0.1415 & 0.21 & 0 \\
+  \end{tabular}
+  \label{tab:sample.data.2C}
+  \caption{Sample data for \textbf{Abalone2C}}
+\end{table}
+
+\subsubsection{Common Setup}
+
+For this simulation all 
+
+\begin{verbatim}
+num_generations 2000
+initial_population 1000
+max_population 10000
+crossover_percent 50
+training_percent 80
+plot_xlab Age
+data_file data2N.in
+model_data_file Abalone2N.txt
+plot_file Abalone2N.png
+r_script_file Abalone2N.R
+generations_file AbaloneGenerations2N.txt
+birthsanddeaths_file AbaloneBirthsAndDeaths2N.txt
+\end{verbatim}
+
+The first six parameters are constant over the four simulations.  The
+final six will be specific to each individual simulation
+
+\subsection{Results}
+
+Each simulation took between 116 and 138 minutes real time\footnote{On
+  a Intel NUC: Intel Core i3-3217U CPU @ 1.80GHz with 15G RAM}.
+
+None of the simulations produced a model that did a very good job
+estimating the age of the fish.
+
+In figure \ref{fig evaluation abalone 1} it can be seen that the
+evaluation of the best models in the simulation very quickly reached a
+maxima.  Simulations 1C and 1N reached a higher evaluation plateau
+than 2C and 2N.  1N and 2N both did a little bit better than 1C and 2C
+but the results are close in that case.
+
+A tentative observation is that the continuous objective is easier for
+the Genetic Programming simulation to find than a classification.
+There is less evidence that encoding the Sex parameter in $-1..1$ is
+better than using factors.
+
+
+Results archived as Abalone20180501
+
+\begin{figure}
+  \centering
+  \begin{subfigure}[b]{0.4\textwidth}
+    \begin{center}
+      \includegraphics[height=0.4\textheight]{Fragments/Abalone1C.png}
+    \end{center}
+    \caption{Results of simulation for Abalone1C}
+    \label{fig:results.Abalone1C}
+  \end{subfigure}  
+\hfill
+  \begin{subfigure}[b]{0.4\textwidth}
+    \begin{center}
+      \includegraphics[height=0.4\textheight]{Fragments/Abalone2C.png}
+    \end{center}
+    \caption{Results of simulation for Abalone2C}
+    \label{fig:results.Abalone2C}
+  \end{subfigure}
+
+  \begin{subfigure}[b]{0.4\textwidth}
+    \begin{center}
+      \includegraphics[height=0.4\textheight]{Fragments/Abalone1N.png}
+    \end{center}
+    \caption{Results of simulation for Abalone1N}
+    \label{fig:results.Abalone1N}
+  \end{subfigure}  
+\hfill
+  \begin{subfigure}[b]{0.4\textwidth}
+    \begin{center}
+      \includegraphics[height=0.4\textheight]{Fragments/Abalone2N.png}
+    \end{center}
+    \caption{Results of simulation for Abalone2N}
+    \label{fig:results.Abalone2N}
+  \end{subfigure}
+  \caption{Results of Abalone Age Estimation Simulation}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \begin{subfigure}[b]{0.2\textwidth}
+    \begin{center}
+      \includegraphics[height=0.2\textheight]{Fragments/Abalone1CGeneration.png}
+    \end{center}
+    \caption{ Abalone1C}
+    \label{fig:evaluation.Abalone1C}
+  \end{subfigure}  
+~
+  \begin{subfigure}[b]{0.2\textwidth}
+    \begin{center}
+      \includegraphics[height=0.2\textheight]{Fragments/Abalone2CGeneration.png}
+    \end{center}
+    \caption{ Abalone2C}
+    \label{fig:evaluation.Abalone2C}
+  \end{subfigure}
+~
+  \begin{subfigure}[b]{0.2\textwidth}
+    \begin{center}
+      \includegraphics[height=0.2\textheight]{Fragments/Abalone1NGeneration.png}
+    \end{center}
+    \caption{ Abalone1N}
+    \label{fig:evaluation.Abalone1N}
+  \end{subfigure}  
+~
+  \begin{subfigure}[b]{0.2\textwidth}
+    \begin{center}
+      \includegraphics[height=0.2\textheight]{Fragments/Abalone2NGeneration.png}
+    \end{center}
+    \caption{ Abalone2N}
+    \label{fig:evaluation.Abalone2N}
+  \end{subfigure}
+  \label{fig evaluation abalone 1}
+  \caption{Evolution of Evaluation for Abalone Age Estimation Simulation}
+\end{figure}
+
+
+
+
+\subsection{Increase Population}
+
+Hypothesising that increasing the population size in the simulations
+will improve the results the population size increased by a factor of
+10.
+
+\begin{verbatim}
+initial_population 1000
+max_population 10000
+\end{verbatim}
+
+\end{document}
