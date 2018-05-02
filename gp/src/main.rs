@@ -28,6 +28,19 @@ enum TerminalType {
 struct Inputs {
     dataf:HashMap<String, f64>,
 }
+impl Inputs {
+    fn new() -> Inputs {
+        Inputs{
+            dataf:HashMap::new(),
+        }
+    }
+    fn  insert(&mut self, k:&str, v:f64) {
+        self.dataf.insert(k.to_string(), v);
+    }
+    fn get(&self, k:&str) -> Option<&f64> {
+        self.dataf.get(k)
+    }
+}
 // Get the data from the terminal
 fn gt(tt:&TerminalType) -> String {
     match tt {
@@ -425,7 +438,7 @@ impl Node {
         match self.o {
             Operator::Terminal(TerminalType::Float(f)) => Some(f),
             Operator::Terminal(TerminalType::Inputf64(ref s)) => 
-                Some(*(inputs.dataf.get(s).unwrap())),
+                Some(*(inputs.get(s).unwrap())),
             Operator::If => {
                 let d = evaluate!(d);
                 let e:f64;
@@ -524,11 +537,11 @@ mod tests {
             dataf:HashMap::new(),
         };
         let s = "Multiply Float 0.06 Negate Diameter";
-        inputs.dataf.insert("Diameter".to_string(), 10.0);
+        inputs.insert("Diameter", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, -0.60);
         let s = "Invert Float 0.1";
-        inputs.dataf.insert("Diameter".to_string(), 10.0);
+        inputs.insert("Diameter", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 10.0);
 
@@ -536,7 +549,7 @@ mod tests {
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 2010.0);
         let s = "Multiply Height Add Float 10.0 Invert Float 0.1";
-        inputs.dataf.insert("Height".to_string(), 10.0);
+        inputs.insert("Height", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 200.0);
     }
@@ -570,6 +583,7 @@ struct Data {
 
 impl Data {
     #[allow(dead_code)]
+    /// Return all the data as a string
     fn to_string(&self) -> String {
         let mut ret = "".to_string();
         for r in &self.rows {
@@ -581,71 +595,83 @@ impl Data {
         }
         ret
     }
-}
-// Read in the data from a file
-fn read_data(f_name:&str , training_percent:usize, e:&mut Entropy) -> std::io::Result<Data> {
-
-    // Must be in file f_name.  First row is header
-
-    let mut ret = Data{
-        names:Vec::<String>::new(),
-        rows:Vec::<HashMap<String, f64>>::new(),
-        testing_i:Vec::<usize>::new(),
-        training_i:Vec::<usize>::new(),
-    };
-
-    let file = File::open(f_name)?;
-    let mut buf_reader = BufReader::new(file);
-    let mut contents = String::new();
-    buf_reader.read_to_string(&mut contents)?;
-    let mut lines = contents.lines();
-
-    // Get first line, allocate names 
-    let h = lines.nth(0);
-    let l = match h {
-        Some(l) =>   {
-            l
-        },
-        None => panic!(""),
-    };
-    let h:Vec<&str> = l.split(',').collect();
-    for s in h {
-        // s is a header
-        ret.names.push(s.to_string());
+    fn new() -> Data {
+        Data{
+            names:Vec::<String>::new(),
+            rows:Vec::<HashMap<String, f64>>::new(),
+            testing_i:Vec::<usize>::new(),
+            training_i:Vec::<usize>::new(),
+        }
     }
-
-    // Loop over the data storing it in the rows
-    let mut ln = 0; // Current line number
-    loop {
-        
-        let line = match lines.next() {
-            Some(l) => l,
-            None => break,
-        };
-        let d:Vec<&str> = line.split(',').collect();
+    fn add_name(& mut self, k:&str) {
+        self.names.push(k.to_string())
+    }
+    fn new_row(&mut self) {
         let hv = HashMap::<String, f64>::new();
-        ret.rows.push(hv);
-        for i in 0..d.len() {
-            let k = ret.names[i].clone();
-            //println!("d[{}] {}", i, d[i]);
-            let v = d[i].parse::<f64>().unwrap();
-            ret.rows[ln].insert(k, v);
-        }
-        ln += 1; 
+        self.rows.push(hv)
     }
+    fn insert(&mut self, k:&str, v:f64) {
+        // Check k is correct
+        let idx = self.rows.len()-1;
+        self.rows[idx].insert(k.to_string(), v);
+    }
+    fn partition(&mut self, training_percent:usize, e:&mut Entropy){
+        // Partition the data into training and testing sets
+        for i in 0..self.rows.len() {
+            let z = e.gen_range(0, 100);
+            if z < training_percent {
+                self.training_i.push(i);
+            }else{
+                self.testing_i.push(i);
+            }
+        }
+    }        
+    
+    // Read in the data from a file
+    fn read_data(&mut self, f_name:&str , training_percent:usize, e:&mut Entropy) {
 
-    // Partition the data into training and testing sets
-    for i in 0..ret.rows.len() {
-        let z = e.gen_range(0, 100);
-        if z < training_percent {
-            ret.training_i.push(i);
-        }else{
-            ret.testing_i.push(i);
+        // Must be in file f_name.  First row is header
+
+        let file = File::open(f_name).unwrap();
+        let mut buf_reader = BufReader::new(file);
+        let mut contents = String::new();
+        buf_reader.read_to_string(&mut contents).unwrap();
+        let mut lines = contents.lines();
+
+        // Get first line, allocate names 
+        let h = lines.nth(0);
+        let l = match h {
+            Some(l) =>   {
+                l
+            },
+            None => panic!(""),
+        };
+        let h:Vec<&str> = l.split(',').collect();
+        for s in h {
+            // s is a header
+            self.add_name(s);
         }
+
+        // Loop over the data storing it in the rows
+        loop {
+            
+            let line = match lines.next() {
+                Some(l) => l,
+                None => break,
+            };
+            let d:Vec<&str> = line.split(',').collect();
+
+            self.new_row();
+            
+            for i in 0..d.len() {
+                let k = self.names[i].clone();
+                let v = d[i].parse::<f64>().unwrap();
+                self.insert(k.as_str(), v);
+            }
+        }
+        self.partition(training_percent, e);
     }
-    Ok(ret)
 }
-
 
 fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
 
@@ -688,9 +714,7 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
 // individual is to be scored on the testing set
 fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     let mut scorev:Vec<f64> = vec![];
-    let mut inputs = Inputs{
-        dataf:HashMap::new(),
-    };
+    let mut inputs = Inputs::new();
 
     //println!("Evaluate {}", stt);
     let index:&Vec<usize>;
@@ -702,15 +726,14 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     for i in index {
         let ref r = d.rows[*i];
         for h in d.names.iter() {
-            let k = h.clone();
-            let v1 = r.get(&k);
-            let v:f64 = *v1.unwrap();
-            inputs.dataf.insert(k, v);
+
+            let v:f64 = *r.get(h).unwrap();
+            inputs.insert(h, v);
         }
         let e = n.evaluate(&inputs).unwrap();
+
         // Get the target
-        let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
-        
+        let t = inputs.get(d.names.last().unwrap()).unwrap();
         scorev.push((e-t).abs());
     }
 
@@ -736,14 +759,13 @@ fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
     for i in index {
         let ref r = d.rows[*i];
         for h in d.names.iter() {
-            let k = h.clone();
-            let v1 = r.get(&k);
+            let v1 = r.get(h);
             let v:f64 = *v1.unwrap();
-            inputs.dataf.insert(k, v);
+            inputs.insert(h, v);
         }
         let e = n.evaluate(&inputs).unwrap();
         // Get the target
-        let t = inputs.dataf.get(d.names.last().unwrap()).unwrap();
+        let t = inputs.get(d.names.last().unwrap()).unwrap();
         ret.push((*t, e));
     }
     ret
@@ -801,7 +823,7 @@ fn add_simulation(data:Vec<(f64, f64)>, id:usize, fname:&str){
 
         results.push_str(header.as_str());
         // Going to loop over all the data from the file and through
-        // the data supplied in data simultaneously
+        // the data supplied in the 'data' parameter simultaneously
         let mut i = 0; // Index into data
         for l in lines {
             // Get the data members of this row
@@ -886,7 +908,8 @@ impl Config {
 
 /// rite out R script to generate plit of results
 fn write_plotting_script(input_data:&str, xlab:&str,
-                         outfile:&str, r_script_file:&str) {
+                         outfile:&str, r_script_file:&str,
+                         id:&str) {
     let  script ="
 data <- read.table('SIMULATIONS', header=TRUE)
 names <- names(data)
@@ -902,10 +925,18 @@ hist(ratio, main=\"Error Ratio\", density=10, xlab=\"Percent Error\", freq=FALSE
 hist(objective, main=\"Objective Data\", density=10, breaks=30, xlab=\"XLAB\")
 hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, breaks=30)
 dev.off()
+# Do cut AbaloneGenerationsID.txt -f 2,4 -d \" \" >GenerationsID.txt
+gen <- read.table(file='GenerationsID.txt')
+png(filename=\"AbaloneIDGeneration.png\",
+    width=210, height=297, units=\"mm\", res=600)
+plot(x=gen[,1], y=gen[,2], t='l', main=\"Evolution of Evaluation AbaloneID\", xlab=\"Generation\", ylab=\"Evaluation\")
+dev.off()
+
 ";
     let script = script.replace("SIMULATIONS", input_data);
     let script = script.as_str().replace("XLAB", xlab).to_string();
     let script = script.as_str().replace("OUTFILE", outfile).to_string();
+    let script = script.as_str().replace("ID", id).to_string();
     let  file = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -968,11 +999,12 @@ fn main() {
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     let crossover_percent = config.get_usize("crossover_percent").unwrap();
     let data_file = config.get_string("data_file").unwrap();
+    let generations_file = config.get_string("generations_file").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
+    let sim_id = config.get_string("id").unwrap();
     let plot_xlab = config.get_string("plot_xlab").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
     let r_script_file = config.get_string("r_script_file").unwrap();
-    let generations_file = config.get_string("generations_file").unwrap();
     let birthsanddeaths_file =
         config.get_string("birthsanddeaths_file").unwrap();
 
@@ -987,7 +1019,8 @@ fn main() {
     let mut e = Entropy::new(&[11,2,3,4]);
 
     // Load the data
-    let d_all:Data = read_data(data_file.as_str(), training_percent, &mut e).unwrap();
+    let mut d_all = Data::new();
+    d_all.read_data(data_file.as_str(), training_percent, &mut e);
 
     if let Some(ns) = config.get_string("eval") {
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
@@ -1184,7 +1217,9 @@ fn main() {
         write_plotting_script(model_data_file.as_str(),
                               plot_xlab.as_str(),
                               plot_file.as_str(),
-                              r_script_file.as_str());
+                              r_script_file.as_str(),
+                              sim_id.as_str(),
+        );
         println!("Bye!");
     }
 
