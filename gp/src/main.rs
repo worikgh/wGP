@@ -499,7 +499,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_data_partition() {
-        let config = Config::new();
+        let config = Config::new("config");
         let training_percent = config.get_usize("training_percent").unwrap();
         let data_file = config.get_string("data_file").unwrap();
 
@@ -509,25 +509,22 @@ mod tests {
         let mut e = Entropy::new(&[11,2,3,4]);
 
         // Load the data
-        let d_all:Data =
-            read_data(data_file.as_str(), 0, &mut e).unwrap();
+        let mut d_all:Data = Data::new();
+        d_all.read_data(data_file.as_str(), 0, &mut e);
         assert_eq!(d_all.training_i.len(), 0);
 
-        let d_all:Data =
-            read_data(data_file.as_str(), 100, &mut e).unwrap();
+        
+        d_all.read_data(data_file.as_str(), 100, &mut e);
         assert_eq!(d_all.testing_i.len(), 0);
 
-        let d_all:Data =
-            read_data(data_file.as_str(), 50, &mut e).unwrap();
+        d_all.read_data(data_file.as_str(), 50, &mut e);
         assert_ne!(d_all.testing_i.len(), 0);
         assert_ne!(d_all.training_i.len(), 0);
 
-        let d_all:Data =
-            read_data(data_file.as_str(), 10, &mut e).unwrap();
+        d_all.read_data(data_file.as_str(), 10, &mut e);
         assert!(d_all.training_i.len()< d_all.testing_i.len(), 0);
 
-        let d_all:Data =
-            read_data(data_file.as_str(), 90, &mut e).unwrap();
+        d_all.read_data(data_file.as_str(), 90, &mut e);
         assert!(d_all.training_i.len() > d_all.testing_i.len(), 0);
 
     }
@@ -572,7 +569,7 @@ struct Data {
     names:Vec<String>, 
 
     // Each row is a hash keyed by names FIXME Inefficient(?) use of memory
-    rows:Vec<HashMap<String, f64>>, 
+    rows:Vec<Vec<f64>>, 
     
     // Indexes into rows for training data
     training_i:Vec<usize>,
@@ -587,8 +584,8 @@ impl Data {
     fn to_string(&self) -> String {
         let mut ret = "".to_string();
         for r in &self.rows {
-            for v in &self.names {
-                ret.push_str(&r.get(v).unwrap().to_string());
+            for i in 0..self.names.len() {
+                ret.push_str(&r[i].to_string()[..]);
                 ret.push_str(",");
             }
             ret.push_str("\n");
@@ -598,22 +595,22 @@ impl Data {
     fn new() -> Data {
         Data{
             names:Vec::<String>::new(),
-            rows:Vec::<HashMap<String, f64>>::new(),
+            rows:Vec::<Vec<f64>>::new(),
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
         }
     }
+    fn reset(&mut self){
+            self.names = Vec::<String>::new();
+            self.rows = Vec::<Vec<f64>>::new();
+            self.testing_i = Vec::<usize>::new();
+            self.training_i = Vec::<usize>::new();
+    }        
+    fn ith_row(&self, i:usize) -> &Vec<f64> {
+        &self.rows[i]
+    }
     fn add_name(& mut self, k:&str) {
         self.names.push(k.to_string())
-    }
-    fn new_row(&mut self) {
-        let hv = HashMap::<String, f64>::new();
-        self.rows.push(hv)
-    }
-    fn insert(&mut self, k:&str, v:f64) {
-        // Check k is correct
-        let idx = self.rows.len()-1;
-        self.rows[idx].insert(k.to_string(), v);
     }
     fn partition(&mut self, training_percent:usize, e:&mut Entropy){
         // Partition the data into training and testing sets
@@ -626,12 +623,14 @@ impl Data {
             }
         }
     }        
-    
+    fn add_row(&mut self, row:Vec<f64>){
+        self.rows.push(row);
+    }
     // Read in the data from a file
     fn read_data(&mut self, f_name:&str , training_percent:usize, e:&mut Entropy) {
 
         // Must be in file f_name.  First row is header
-
+        self.reset();
         let file = File::open(f_name).unwrap();
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
@@ -646,6 +645,7 @@ impl Data {
             },
             None => panic!(""),
         };
+
         let h:Vec<&str> = l.split(',').collect();
         for s in h {
             // s is a header
@@ -660,14 +660,15 @@ impl Data {
                 None => break,
             };
             let d:Vec<&str> = line.split(',').collect();
+            let d:Vec<f64> = d.iter().map(|x| {x.parse::<f64>().unwrap()}).collect();
 
-            self.new_row();
+            self.add_row(d);
             
-            for i in 0..d.len() {
-                let k = self.names[i].clone();
-                let v = d[i].parse::<f64>().unwrap();
-                self.insert(k.as_str(), v);
-            }
+            // for i in 0..d.len() {
+            //     let k = self.names[i].clone();
+            //     let v = d[i].parse::<f64>().unwrap();
+            //     self.insert(k.as_str(), v);
+            // }
         }
         self.partition(training_percent, e);
     }
@@ -724,11 +725,11 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
         index = &d.training_i;
     }
     for i in index {
-        let ref r = d.rows[*i];
-        for h in d.names.iter() {
-
-            let v:f64 = *r.get(h).unwrap();
-            inputs.insert(h, v);
+        let ref r = d.ith_row(*i);
+        for j in 0..d.names.len() {
+            let v:f64 = r[j];
+            let h = d.names[j].clone();
+            inputs.insert(h.as_str(), v);
         }
         let e = n.evaluate(&inputs).unwrap();
 
@@ -752,16 +753,14 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
 // The first element is true value the second is simulation result
 fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
     let mut ret:Vec<(f64, f64)> = vec![];
-    let mut inputs = Inputs{
-        dataf:HashMap::new(),
-    };
+    let mut inputs = Inputs::new();
     let ref index = d.testing_i;
     for i in index {
         let ref r = d.rows[*i];
-        for h in d.names.iter() {
-            let v1 = r.get(h);
-            let v:f64 = *v1.unwrap();
-            inputs.insert(h, v);
+        for j in 0..d.names.len() {
+            let v = r[j];
+            let h = d.names[j].clone();
+            inputs.insert(h.as_str(), v);
         }
         let e = n.evaluate(&inputs).unwrap();
         // Get the target
@@ -870,6 +869,7 @@ struct Config {
 
 impl Config {
     fn new(cfg_file:&str)-> Config {
+        println!("cfg file {}", cfg_file);
         let file = File::open(cfg_file).unwrap();
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
