@@ -909,6 +909,7 @@ impl Config {
 /// rite out R script to generate plit of results
 fn write_plotting_script(input_data:&str, xlab:&str,
                          outfile:&str, r_script_file:&str,
+                         generations_file:&str,
                          id:&str) {
     let  script ="
 data <- read.table('SIMULATIONS', header=TRUE)
@@ -925,16 +926,72 @@ hist(ratio, main=\"Error Ratio\", density=10, xlab=\"Percent Error\", freq=FALSE
 hist(objective, main=\"Objective Data\", density=10, breaks=30, xlab=\"XLAB\")
 hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, breaks=30)
 dev.off()
-# Do cut AbaloneGenerationsID.txt -f 2,4 -d \" \" >GenerationsID.txt
-gen <- read.table(file='GenerationsID.txt')
-png(filename=\"AbaloneIDGeneration.png\",
-    width=210, height=297, units=\"mm\", res=600)
-plot(x=gen[,1], y=gen[,2], t='l', main=\"Evolution of Evaluation AbaloneID\", xlab=\"Generation\", ylab=\"Evaluation\")
-dev.off()
 
+gen <- read.table(file='GenerationsID.txt')
+png(filename=\"IDGeneration.png\",
+    width=210, height=297, units=\"mm\", res=600)
+## Read the first four columns from the file as numeric
+q <- scan(\"GENERATIONS_FILE\", what = list(1,1,1,1,1), flush = TRUE)
+data <- cbind(c(0, diff(q[[1]])),q[[2]], q[[3]], q[[4]], q[[5]])
+## First row has invalid time data (no diff at time 0) so get rid of it?
+## data <- data[-1,] Na!
+
+colnames(data) <- c(\"Sec\", \"Gen\", \"ID\", \"Eval\", \"Pop\")
+
+
+gen <- data[,\"Gen\"]
+sec <- data[,\"Sec\"]
+pop <- data[,\"Pop\"]
+eval <- data[,'Eval']
+
+## Normalise eval and pop to same scale as sec
+eval.2 <- (eval - min(eval))*max(sec)
+pop.2 <-  (pop - min(pop))*max(sec)
+
+
+## Define Margins. The trick is to use give as much space possible on
+## the left margin (second value)
+par(mar=c(5, 12, 4, 4) + 0.1)
+
+## Plot the first time series. Notice that you don’t have to draw the
+## axis nor the labels
+
+
+plot(gen, sec, axes=F, ylim=c(0,max(sec)), xlab=\"\", ylab=\"\",type=\"l\",col=\"black\", main=\"ID\",xlim=range(gen))
+
+axis(2, ylim=c(0,max(sec)),col=\"black\",lwd=2)
+mtext(2,text=\"Sec\",line=2)
+
+par(new=T)
+plot(gen, eval.2, axes=F, ylim=range(eval.2), xlab=\"\", ylab=\"\", type=\"l\",lty=2, main=\"\",xlim=range(gen),lwd=2, col=2)
+
+labels <- signif(seq(from=min(eval), to=max(eval), length.out=8),  4)
+at <- seq(from=min(eval.2), to=max(eval.2), length.out=8)
+axis(2, at=at, labels=labels, lwd=2,line=3.5)
+mtext(2,text=\"Eval\",line=5.5)
+
+## Plot the third time series. Again the line parameter are both
+## further increased.
+
+par(new=T)
+plot(gen, pop.2, axes=F, ylim=range(pop.2), xlab=\"\", ylab=\"\", type=\"l\",lty=3, main=\"\",xlim=range(gen),lwd=2, col=3)
+axis(2, ylim=range(pop),lwd=2,line=7)
+mtext(2,text=\"Population\",line=9)
+
+##We can now draw the X-axis, which is of course shared by all the
+##three time-series.
+
+axis(1,pretty(range(gen),10))
+mtext(\"Generation\",side=1,col=\"black\",line=2)
+
+##And then plot the legend.
+legend(x=\"topleft\", legend=c(\"Sec\",\"Eval\",\"Pop\"),lty=c(1,2,3), col=c(1,2,3), bty='n') 
+dev.off()
 ";
     let script = script.replace("SIMULATIONS", input_data);
     let script = script.as_str().replace("XLAB", xlab).to_string();
+    let script = script.as_str().replace("GENERATIONS_FILE",
+                                         generations_file).to_string();
     let script = script.as_str().replace("OUTFILE", outfile).to_string();
     let script = script.as_str().replace("ID", id).to_string();
     let  file = OpenOptions::new()
@@ -1012,6 +1069,15 @@ fn main() {
     let mut generation_recorder = Recorder::new(generations_file.as_str());
     let mut birth_death_recorder =
         Recorder::new(birthsanddeaths_file.as_str());
+
+    // Write out the R script to plot the simulation
+    write_plotting_script(model_data_file.as_str(),
+                          plot_xlab.as_str(),
+                          plot_file.as_str(),
+                          r_script_file.as_str(),
+                          generations_file.as_str(),
+                          sim_id.as_str(),
+    );
 
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
@@ -1214,12 +1280,6 @@ fn main() {
             // }
             //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
         }
-        write_plotting_script(model_data_file.as_str(),
-                              plot_xlab.as_str(),
-                              plot_file.as_str(),
-                              r_script_file.as_str(),
-                              sim_id.as_str(),
-        );
         println!("Bye!");
     }
 
