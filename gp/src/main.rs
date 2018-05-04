@@ -1102,6 +1102,9 @@ fn main() {
     let r_script_file = config.get_string("r_script_file").unwrap();
     let birthsanddeaths_file =
         config.get_string("birthsanddeaths_file").unwrap();
+    // The seed is a string of usize numbers
+    let seed = config.get_string("seed").unwrap();
+    let seed:Vec<usize> = seed.split_whitespace().map(|x| x.parse::<usize>().unwrap()).collect();
 
     // Set up output files
     let mut generation_recorder = Recorder::new(generations_file.as_str());
@@ -1120,7 +1123,7 @@ fn main() {
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
     // let mut e = Entropy::new(&[11,2,3,422, 195]);
-    let mut e = Entropy::new(&[11,2,3,4]);
+    let mut e = Entropy::new(&seed);
 
     // Load the data
     let mut d_all = Data::new();
