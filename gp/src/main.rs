@@ -4,9 +4,6 @@ extern crate statistical;
 use std::env;
 use std::path::Path;
 use std::time::SystemTime;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::StdRng;
 //use statistical::mean;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -16,6 +13,9 @@ use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
+
+mod entropy;
+use entropy::Randomness;
 
 // The type of data that can be a terminal
 #[derive(Debug)]
@@ -82,25 +82,6 @@ struct Node {
 
 // The source of entropy that is passed to trees to create themselves.
 // With.  FIXME Why not pass around a StdRng?
-struct Entropy
-{
-    rng:StdRng,
-}
-impl Entropy{
-    fn new(seed:&[usize]) -> Entropy {
-        Entropy{rng:SeedableRng::from_seed(seed)}
-    }
-    fn gen(& mut self) -> f64 {
-        self.rng.gen()
-    }
-    fn gen_range(& mut self, a:usize, b:usize)->usize{
-        self.rng.gen_range(a,b)
-    }
-    fn gen_rangef64(& mut self, a:f64, b:f64)->f64{
-        self.rng.gen_range(a,b)
-    }
-}
-
 impl Node {
     fn new_from_string(s:&str) -> Node {
         let mut iter = s.split_whitespace();
@@ -145,11 +126,11 @@ impl Node {
         Node{o:operator, l:l, r:r, d:d}
     }    // Build a random tree
     /* Paramaters:
-     * Entropy - A source of randomness
+     * entropy - A source of randomness
      * names - The names of the input fields
      * level - The distance from the root node for this node
      */
-    fn new(e:&mut Entropy, names:&Vec<String>, level:usize) -> Node {
+    fn new(e:&mut Randomness, names:&Vec<String>, level:usize) -> Node {
         let l = level+1;
 
         // FIXME Make this max levela configurable constant
@@ -203,7 +184,7 @@ impl Node {
         };
         lc + rc + 1
     }
-    fn random_node(&self, e:& mut Entropy) -> NodeBox {
+    fn random_node(&self, e:& mut Randomness) -> NodeBox {
         // Choose a subtree (node) of this tree (node).  FIXME there
         // is a lot of optimisation to be done.  Paticularly if each
         // node had the number of nodes that are child nodes of this...
@@ -508,8 +489,8 @@ mod tests {
 
         // The source of entropy.  This is done this way so the same seed
         // can be used to produce repeatable results
-        // let mut e = Entropy::new(&[11,2,3,422, 195]);
-        let mut e = Entropy::new(&[11,2,3,4]);
+        // let mut e = Randomness::new(&[11,2,3,422, 195]);
+        let mut e = Randomness::new(&[11,2,3,4]);
 
         // Load the data
         let mut d_all:Data = Data::new();
@@ -666,7 +647,7 @@ impl Data {
     fn add_name(& mut self, k:&str) {
         self.names.push(k.to_string())
     }
-    fn partition(&mut self, training_percent:usize, e:&mut Entropy){
+    fn partition(&mut self, training_percent:usize, e:&mut Randomness){
         // Partition the data into training and testing sets
         for i in 0..self.rows.len() {
             let z = e.gen_range(0, 100);
@@ -682,7 +663,7 @@ impl Data {
     }
     // Read in the data from a file
     fn read_data(&mut self, f_name:&str,
-                 training_percent:usize, e:&mut Entropy) {
+                 training_percent:usize, e:&mut Randomness) {
 
         // Must be in file f_name.  First row is header
         self.reset();
@@ -724,7 +705,7 @@ impl Data {
     }
 }
 
-fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
+fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Randomness) -> NodeBox {
 
     
     let p:NodeBox;// Parent
@@ -1122,8 +1103,8 @@ fn main() {
 
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results
-    // let mut e = Entropy::new(&[11,2,3,422, 195]);
-    let mut e = Entropy::new(&seed);
+    // let mut e = Randomness::new(&[11,2,3,422, 195]);
+    let mut e = Randomness::new(&seed);
 
     // Load the data
     let mut d_all = Data::new();
