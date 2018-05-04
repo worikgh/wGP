@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::StdRng;
-use statistical::mean;
+//use statistical::mean;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
@@ -18,6 +18,7 @@ use std::io::BufWriter;
 use std::io::prelude::*;
 
 // The type of data that can be a terminal
+#[derive(Debug)]
 enum TerminalType {
     Float(f64),
     // Custom terminals for inputs
@@ -56,6 +57,7 @@ impl fmt::Display for TerminalType {
 }
 
 // The operations that are implemented
+#[derive(Debug)]
 enum Operator {
     Add,  
     Log,  
@@ -124,6 +126,11 @@ impl Node {
             s => Operator::Terminal(TerminalType::Inputf64(s.to_string())),
         };
 
+        let d = match operator {
+            Operator::If =>
+                Some(NodeBox::new(Node::new_from_iter(iter))),
+            _ => None,
+        };
         let l = match operator {
             Operator::Terminal(_) => None,
             _ => Some(NodeBox::new(Node::new_from_iter(iter))),
@@ -131,11 +138,6 @@ impl Node {
         let r = match operator {
             Operator::Add|Operator::Multiply|Operator::If|
             Operator::Gt|Operator::Lt =>
-                Some(NodeBox::new(Node::new_from_iter(iter))),
-            _ => None,
-        };
-        let d = match operator {
-            Operator::If =>
                 Some(NodeBox::new(Node::new_from_iter(iter))),
             _ => None,
         };
@@ -158,7 +160,6 @@ impl Node {
             e.gen_range(0, 18)
         };
 
-        //print!("level {} ", l);
         macro_rules! NewNode {
             ($name:ident) => {
                 Node{o:Operator::$name,
@@ -355,7 +356,6 @@ impl Node {
                 };
             }
         };
-        
 
         // Macro to make a three child  node into a string
         macro_rules! node_to_string3 {
@@ -435,14 +435,18 @@ impl Node {
                 }
             }
         }
+
         match self.o {
-            Operator::Terminal(TerminalType::Float(f)) => Some(f),
-            Operator::Terminal(TerminalType::Inputf64(ref s)) => 
-                Some(*(inputs.get(s).unwrap())),
+            Operator::Terminal(TerminalType::Float(f)) => {
+                Some(f)
+            },
+            Operator::Terminal(TerminalType::Inputf64(ref s)) => {
+                Some(*(inputs.get(s).unwrap()))
+            },
             Operator::If => {
-                let d = evaluate!(d);
+                let def = evaluate!(d);
                 let e:f64;
-                if d <= 0.0 {
+                if def >= 0.0 {
                     e = evaluate!(l);
                 }else{
                     e = evaluate!(r);
@@ -500,7 +504,6 @@ mod tests {
     #[test]
     fn test_data_partition() {
         let config = Config::new("config");
-        let training_percent = config.get_usize("training_percent").unwrap();
         let data_file = config.get_string("data_file").unwrap();
 
         // The source of entropy.  This is done this way so the same seed
@@ -530,25 +533,76 @@ mod tests {
     }
     #[test]
     fn test_node_eval(){
-        let mut inputs = Inputs {
-            dataf:HashMap::new(),
-        };
+        let mut inputs = Inputs::new();
         let s = "Multiply Float 0.06 Negate Diameter";
         inputs.insert("Diameter", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, -0.60);
+
+        let mut inputs = Inputs::new();
         let s = "Invert Float 0.1";
         inputs.insert("Diameter", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 10.0);
 
+        let inputs = Inputs::new();
         let s = "Add Float 2000.0 Invert Float 0.1";
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 2010.0);
+
+        let mut inputs = Inputs::new();
         let s = "Multiply Height Add Float 10.0 Invert Float 0.1";
         inputs.insert("Height", 10.0);
         let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 200.0);
+
+        let s = "If Lt x Float 0.0 Float -1.0 Float 1.0";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 1.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, 1.0);
+
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 0.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, 1.0);
+
+        let mut inputs = Inputs::new();
+        inputs.insert("x", -0.01);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, -1.0);        
+
+        let s = "Gt Log If x x x x";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 1.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, -1.0);        
+
+        let s = "Lt Log If x x x x";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 1.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, 1.0);        
+
+        let s = "If Lt x y x y";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 1.2);
+        inputs.insert("y", 1.1);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, 1.1);        
+
+        let s = "If Lt x y x y";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", -9.0);
+        inputs.insert("y", 1.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, -9.0);        
+
     }
     #[test]
     fn test_node_from_string(){
@@ -627,7 +681,8 @@ impl Data {
         self.rows.push(row);
     }
     // Read in the data from a file
-    fn read_data(&mut self, f_name:&str , training_percent:usize, e:&mut Entropy) {
+    fn read_data(&mut self, f_name:&str,
+                 training_percent:usize, e:&mut Entropy) {
 
         // Must be in file f_name.  First row is header
         self.reset();
@@ -664,11 +719,6 @@ impl Data {
 
             self.add_row(d);
             
-            // for i in 0..d.len() {
-            //     let k = self.names[i].clone();
-            //     let v = d[i].parse::<f64>().unwrap();
-            //     self.insert(k.as_str(), v);
-            // }
         }
         self.partition(training_percent, e);
     }
@@ -714,16 +764,15 @@ fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Entropy) -> NodeBox {
 // individual Param d: The data to use.  'use_testing' is true if the
 // individual is to be scored on the testing set
 fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
-    let mut scorev:Vec<f64> = vec![];
     let mut inputs = Inputs::new();
 
-    //println!("Evaluate {}", stt);
     let index:&Vec<usize>;
     if use_testing {
         index = &d.testing_i;
     }else{
         index = &d.training_i;
     }
+    let mut sum_square = 0.0;
     for i in index {
         let ref r = d.ith_row(*i);
         for j in 0..d.names.len() {
@@ -732,21 +781,12 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
             inputs.insert(h.as_str(), v);
         }
         let e = n.evaluate(&inputs).unwrap();
-
+        
         // Get the target
         let t = inputs.get(d.names.last().unwrap()).unwrap();
-        scorev.push((e-t).abs());
+        sum_square += (e-t)*(e-t);
     }
-
-    // Take the inverse of the mean value of the score
-    let ret = 1.0/mean(&scorev[..]);
-
-    // Take the maximum - The worst result
-    // &scorev[..].sort_by(|a, b| {b.partial_cmp(&a).unwrap_or(Ordering::Equal)});
-    // let ret = scorev[0];
-
-    //println!("Sc! {} {}", scorev[0], scorev[scorev.len()-1]);
-    ret.ln_1p()
+    sum_square.sqrt()
 }
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
@@ -861,15 +901,11 @@ fn add_simulation(data:Vec<(f64, f64)>, id:usize, fname:&str){
     
 
 struct Config {
-    // max_generations: usize,
-    // max_population: usize,
-    // crossover_percent: usize
     data:HashMap<String, String>,
 }
 
 impl Config {
     fn new(cfg_file:&str)-> Config {
-        println!("cfg file {}", cfg_file);
         let file = File::open(cfg_file).unwrap();
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
@@ -880,7 +916,9 @@ impl Config {
             let mut iter = line.split_whitespace();
             let k = iter.next().unwrap();
             let v = iter.map(|x| format!("{} ", x)).collect::<String>();
-            config_hm.insert(k.to_string(), v.trim().to_string());
+            if k != "#" {
+                config_hm.insert(k.to_string(), v.trim().to_string());
+            }
         }
         Config{data:config_hm}
     }
@@ -927,7 +965,7 @@ hist(objective, main=\"Objective Data\", density=10, breaks=30, xlab=\"XLAB\")
 hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, breaks=30)
 dev.off()
 
-gen <- read.table(file='GenerationsID.txt')
+
 png(filename=\"IDGeneration.png\",
     width=210, height=297, units=\"mm\", res=600)
 ## Read the first four columns from the file as numeric
@@ -1116,6 +1154,11 @@ fn main() {
                 {
                     birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
                 }
+                if sc == 0.0 {
+                    // Found the perfect individual.  Quit
+                    println!("Found perfect Node! {}", n.to_string());
+                    ::std::process::exit(0);
+                }
                 population.0.push((maxid, n, sc));
             }
             if population.0.len() == initial_population {
@@ -1135,6 +1178,7 @@ fn main() {
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
             birth_death_recorder.buffer.flush().unwrap();
+
             // Filter out members of population that have no valid score (arithmetic error)
             population.0 = population.0.into_iter().filter(|x| {
                 if !x.2.is_finite() {
@@ -1148,7 +1192,7 @@ fn main() {
             // Sort population by score, descending so the best are
             // earliest.  Allows the less good individuals to be easilly
             // pop'd off the end
-            &population.0[..].sort_by(|a, b| {
+            &population.0[..].sort_by(|b, a| {
                 let a2 = a.2;
                 let b2 = b.2;
                 b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
@@ -1172,14 +1216,17 @@ fn main() {
                     let lable = population.0[best_idx].0;
 
                     // Store its data
-                    add_simulation(simulate(&n, &d_all), lable,
+                    let simulation = simulate(&n, &d_all);
+                    add_simulation(simulation, lable,
                                    model_data_file.as_str());
                 }
             }
             
             let mut total_score = 0.0;
             for x in population.0.iter() {
-                total_score += x.2;
+                // Minimising score so we use inverse for selecting
+                // crossover roulette selection
+                total_score += 1.0/x.2;
             }
 
             // Choose a node from population to participate in crossover.
@@ -1199,7 +1246,8 @@ fn main() {
                         let mut cum_score = 0.0;
                         for i in 0..population.0.len() {
                             let t:&Tree = &population.0[i];
-                            cum_score += t.2;
+                            // Inverse as scores are being minimised
+                            cum_score += 1.0/t.2; 
                             if cum_score >= s {
                                 p = Some(i);
                                 break;
@@ -1242,8 +1290,13 @@ fn main() {
                     }
                 }
                 if flag {
-                    //println!("Befoe score: {}  ", maxid);
+                    let str_pc = pc.to_string();
                     population.0.push((maxid, pc, s));
+                    if s == 0.0 {
+                        // Found the perfect individual.  Quit
+                        println!("Found perfect Node! {}", str_pc);
+                        ::std::process::exit(0);
+                    }
                 }
             }
             // Adjust population
@@ -1274,13 +1327,7 @@ fn main() {
                 let n = hh.entry(k).or_insert(0);
                 *n += 1;
             }
-            
-            // for h in hh.keys() {
-            //     println!("TEST {} {}", hh.get(h.as_str()).unwrap(), h);
-            // }
-            //println!("Population size is {} with {} unique individuals", population.0.len(), hh.keys().len())
         }
         println!("Bye!");
     }
-
 }
