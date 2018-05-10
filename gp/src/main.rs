@@ -70,6 +70,66 @@ enum Operator {
     Terminal(TerminalType),
 }
 
+struct Mutator {
+    names:Vec<String>,
+}
+impl Mutator {
+    fn mutate_tree(&self,i:NodeBox, e:&mut Randomness) -> NodeBox {
+        let names = &self.names;
+        // How many nodes are there?
+        let nc = i.count_child_nodes();
+        // In decision branch?
+        let dnc = match i.d {
+            Some(ref d) => d.count_child_nodes(),
+            None => 0,
+        };
+        // In left child?
+        let lnc = match i.l {
+            Some(ref l) => l.count_child_nodes(),
+            None => 0,
+        };
+        // In right child
+        let rnc = match i.r {
+            Some(ref r) => r.count_child_nodes(),
+            None => 0,
+        };
+        assert_eq!(dnc+lnc+rnc, nc);
+
+        // Choose which tree to mutate
+        let selector = e.gen_range(0, nc+1);
+        if selector < dnc {
+            self.mutate_tree(i.d.unwrap(),e)
+        }else if selector < dnc + lnc {
+            self.mutate_tree(i.l.unwrap(),e)
+        }else if selector < dnc + lnc + rnc {
+            self.mutate_tree(i.r.unwrap(),e)
+        }else{
+            // Mutate i
+            // Two cases: This is a terminal, this is not terminal
+            if nc == 0 {
+                // i is a terminal.  FIXME  Mutate this!
+                i.copy()
+            }else{
+                // i is not terminal
+                let mut ret = i.copy();
+                let child = Node::new(e, names, 0);
+                // Select which branch
+                let selector = e.gen_range(0, nc);
+                if selector < dnc {
+                    ret.d = Some(NodeBox::new(child));
+                }else if selector < dnc + lnc {
+                    ret.l = Some(NodeBox::new(child));
+                }else if selector < dnc + lnc + rnc {
+                    ret.r = Some(NodeBox::new(child));
+                }else{
+                    panic!("selector {} is invalid", selector);
+                }
+                ret
+            }
+        }
+
+    }
+}
 // The basic unit of aAST
 type NodeBox = Box<Node>;
 struct Node {
@@ -1154,6 +1214,8 @@ fn main() {
 
         let mut best_id = 0;
         let mut best_individual = "".to_string();
+        let mutator:Mutator = Mutator{names:d_all.names.clone()};
+
         for generation in 0..num_generations {
             let s = format!("{} {} {} {} {}", generation,
                             population.0[0].0, population.0[0].2,
