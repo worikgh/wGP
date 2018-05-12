@@ -77,23 +77,27 @@ impl Mutator {
     fn mutate_tree(&self,i:NodeBox, e:&mut Randomness) -> NodeBox {
         let names = &self.names;
         // How many nodes are there?
-        let nc = i.count_child_nodes();
+        let nc = i.count_nodes();
         // In decision branch?
         let dnc = match i.d {
-            Some(ref d) => d.count_child_nodes(),
+            Some(ref d) => {
+                // println!("Got d: {}", d.to_string());
+                d.count_nodes()
+            },
             None => 0,
         };
         // In left child?
         let lnc = match i.l {
-            Some(ref l) => l.count_child_nodes(),
+            Some(ref l) => l.count_nodes(),
             None => 0,
         };
         // In right child
         let rnc = match i.r {
-            Some(ref r) => r.count_child_nodes(),
+            Some(ref r) => r.count_nodes(),
             None => 0,
         };
-        assert_eq!(dnc+lnc+rnc, nc);
+        // println!("dnc {} lnc {} rnc {} nc {}\n{}\n", dnc, lnc, rnc, nc, i.to_pretty_string(0));
+        assert_eq!(dnc+lnc+rnc, nc-1);
 
         // Choose which tree to mutate
         let selector = e.gen_range(0, nc+1);
@@ -106,7 +110,7 @@ impl Mutator {
         }else{
             // Mutate i
             // Two cases: This is a terminal, this is not terminal
-            if nc == 0 {
+            if nc == 1 {
                 // i is a terminal.  FIXME  Mutate this!
                 i.copy()
             }else{
@@ -114,15 +118,16 @@ impl Mutator {
                 let mut ret = i.copy();
                 let child = Node::new(e, names, 0);
                 // Select which branch
-                let selector = e.gen_range(0, nc);
-                if selector < dnc {
-                    ret.d = Some(NodeBox::new(child));
-                }else if selector < dnc + lnc {
+                let selector = e.gen_range(0, nc-1);
+                if selector < lnc {
                     ret.l = Some(NodeBox::new(child));
-                }else if selector < dnc + lnc + rnc {
+                }else if selector < rnc + lnc {
                     ret.r = Some(NodeBox::new(child));
+                }else if selector < dnc + lnc + rnc {
+                    ret.d = Some(NodeBox::new(child));
                 }else{
-                    panic!("selector {} is invalid", selector);
+                    panic!("selector {} is invalid lnc {} rnc {} dnc {} nc {}",
+                             selector, lnc, rnc, dnc, nc);
                 }
                 ret
             }
@@ -202,27 +207,36 @@ impl Node {
         };
 
         macro_rules! NewNode {
-            ($name:ident) => {
-                Node{o:Operator::$name,
-                     l: Some(Box::new(Node::new(e , names, l))),
-                     r: Some(Box::new(Node::new(e, names, l))),
-                     d: Some(Box::new(Node::new(e, names, l))),
+            ($name:ident, $c:expr) => {
+                {
+                    let mut ret = Node{o:Operator::$name,
+                                       l: None,
+                                       r: None,
+                                       d: None,
+                    };
+                    if $c > 0 {
+                        ret.l = Some(Box::new(Node::new(e , names, l)));
+                    }
+                    if $c > 1 {
+                        ret.r = Some(Box::new(Node::new(e , names, l)));
+                    }
+                    if $c > 2 {
+                        ret.d = Some(Box::new(Node::new(e , names, l)));
+                    }
+                    ret
                 }
             }
         };
         match a {
             0 => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None, d:None},
-            1 => NewNode!(Multiply),
-            2 => {
-                let n = NewNode!(Invert);
-                n
-            },
-            3 => NewNode!(Negate),
-            4 => NewNode!(If),
-            5 => NewNode!(Gt),
-            6 => NewNode!(Lt),
-            7 => NewNode!(Add),
-            8 => NewNode!(Log),
+            1 => NewNode!(Log,1),
+            2 => NewNode!(Invert,1),
+            3 => NewNode!(Negate,1),
+            4 => NewNode!(Multiply,2),
+            5 => NewNode!(Gt,2),
+            6 => NewNode!(Lt,2),
+            7 => NewNode!(Add,2),
+            8 => NewNode!(If,3),
             _ => {
                 // Input node
                 let n = names.len() - 1; // -1 as last name/column is solution
@@ -232,53 +246,107 @@ impl Node {
             }
         }
     }
-    fn count_child_nodes(&self) -> usize {
+    fn count_nodes(&self) -> usize {
         // Recursive count of child nodes
+        let dc = match self.d {
+            Some(ref n) => n.count_nodes(),
+            None => 0,
+        };
         let lc = match self.l {
-            Some(ref n) => n.count_child_nodes(),
+            Some(ref n) => n.count_nodes(),
             None => 0,
         };
         let rc = match self.r {
-            Some(ref n) => n.count_child_nodes(),
+            Some(ref n) => n.count_nodes(),
             None => 0,
         };
-        lc + rc + 1
+        dc + lc + rc + 1
     }
     fn random_node(&self, e:& mut Randomness) -> NodeBox {
         // Choose a subtree (node) of this tree (node).  FIXME there
         // is a lot of optimisation to be done.  Paticularly if each
         // node had the number of nodes that are child nodes of this...
-        let c = self.count_child_nodes();
+        let c = self.count_nodes();
         let mut n = e.gen_range(0, c);
         let mut node:& Node = self;
         loop {
-            // Loop invariant n >= 1
-            // Exit when n == 1
-            if match node.l{Some(_) => false, None => true} &&
-                match node.r{Some(_) => false, None => true} {
-                    break;
+            // println!("Node: {} n {}", self.to_string(), n);
+            // Loop invariant n >= 0 Exit when a node with no left or
+            // right children is encountered or n == 0
+            if n == 0 {
+                break;
+            }
+            let fl = match node.l{Some(_) => false, None => true};
+            let fr = match node.r{Some(_) => false, None => true};
+            if fl && fr {
+                // No children (if there is a 'd' child there must be
+                // 'l'and 'r') or n is one so we have arrived at the
+                // node selected by the e.gen_range statement above
+                if n != 0 {
+                    panic!("Node: {} n {}", self.to_string(), n);
                 }
-            let lc = match node.l {
-                Some(ref q) => (*q).count_child_nodes(),
+                break;
+            }
+
+            // Children in decision node
+            let dc = match node.d {
+                Some(ref q) => (*q).count_nodes(),
                 None => 0,
             };
 
-            if lc < n {
-                // Get node from right sub tree
-                node = match node.r {
-                    Some(ref r) => &*r,
-                    None => panic!(""),
-                };
-                n -= lc;
-            }else if lc > n {
-                // Get node from left subtree
-                node = match node.l {
-                    Some(ref l) => &*l,
-                    None => panic!(""),
-                };
+            if dc >= n {
+                // Wanted node is in decision sub-tree
+                // println!("Go d: dc {}", dc);
+                if let Some(ref nd) = node.d {
+                    node = &*nd;
+
+                    // Subtract the current (consumed) node from n
+                    n -= 1;
+                        
+                    continue // FIXME is this needed?
+                }else{
+                    panic!("dc {} n {} operator {:?} ",
+                           dc, n, self.to_string());
+                }
+            }
+
+            // Is node in left subtree?
+            let lc = match node.l {
+                Some(ref q) => (*q).count_nodes(),
+                None => 0,
+            };
+
+            if dc+lc >= n {
+                // Get node from left sub tree
+                // println!("Go l: dc {} lc {}", dc, lc);
+                if let Some(ref nd) =  node.l {
+                    node = &*nd;
+
+                    // Have consumed all nodes in decision tree
+                    // and this node.
+                    n -= 1+dc;
+                    
+                    continue // FIXME is this needed?
+                }else{
+                    panic!("lc {} n {} operator {:?} ",
+                           lc, n, self.to_string())
+                }
             }else{
-                assert_eq!(lc, n);
-                break;
+
+                // println!("Go r: dc {} lc {}", dc, lc);
+                // Get node from right subtree
+                if let Some(ref nd) = node.r {
+                    node = &*nd;
+
+                    // Have consumed all nodes in decision tree,
+                    // left sub-tree, and this node.
+                    n -= 1+dc+lc;
+
+                    continue // FIXME is this needed?
+                }else{
+                    panic!("n {} operator {:?} ",
+                           n, self.to_string())
+                }
             }
         }
         NodeBox::new(*node.copy())
@@ -337,9 +405,9 @@ impl Node {
                 {
                     ret.push_str(stringify!($name) );
                     ret.push_str(" ");
+                    child_to_string!(d);
                     child_to_string!(l);
                     child_to_string!(r);
-                    child_to_string!(d);
                 }
             }
         };
@@ -393,7 +461,7 @@ impl Node {
             ($name:ident) => {
                 match self.$name {
                     Some(ref $name) => ret.push_str(&(*$name).to_pretty_string(level+1)),
-                    None => panic!("{}", 1),
+                    None => panic!("name invalid"),
                 };
             }
         };
@@ -407,9 +475,9 @@ impl Node {
                     }
                     ret.push_str(stringify!($name) );
                     ret.push_str("\n");
+                    child_to_string!(d);
                     child_to_string!(l);
                     child_to_string!(r);
-                    child_to_string!(d);
                 }
             }
         };
@@ -1130,6 +1198,7 @@ fn main() {
 
     let config = Config::new(cfg_file.as_str());
     let num_generations = config.get_usize("num_generations").unwrap();
+    let mutate_prob = config.get_usize("mutate_prob").unwrap();
     let max_population =  config.get_usize("max_population").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
@@ -1225,6 +1294,25 @@ fn main() {
             generation_recorder.buffer.flush().unwrap();
             birth_death_recorder.buffer.flush().unwrap();
 
+            // Do mutation
+            for i in 0..population.0.len() {
+                if e.gen_range(0, 100) < mutate_prob {
+                    // Choosen this individual
+                    let old_individual = population.0[i].1.copy();
+                    let olds = old_individual.to_string();
+                    population.1.remove(&old_individual.to_string());
+                    let new_individual = mutator.mutate_tree(old_individual, &mut e);
+                    population.0[i].2 = score_individual(&new_individual, &d_all, false);
+                    population.0[i].1 = new_individual;
+                    let news = population.0[i].1.to_string();
+                    population.1.insert(news.clone(), true);
+                    birth_death_recorder.write_line(format!("Mutate: {} {} --> {}",
+                                                    population.0[i].0,
+                                                    olds,
+                                                    news).as_str());
+                    }
+            }
+            
             // Filter out members of population that have no valid score (arithmetic error)
             population.0 = population.0.into_iter().filter(|x| {
                 if !x.2.is_finite() {
