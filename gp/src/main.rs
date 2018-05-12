@@ -1034,7 +1034,7 @@ impl Config {
     fn get_usize(&self, k:&str) -> Option<usize> {
         let v = match self.data.get(k) {
             Some(v) => v,
-            _ => panic!(""),
+            _ => panic!("Failed config. {} as usize", k),
         };
         let ret = match v.parse::<usize>() {
             Ok(v) => Some(v),
