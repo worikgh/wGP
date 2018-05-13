@@ -739,6 +739,10 @@ struct Data {
 
     // Indexes into rows for testing data
     testing_i:Vec<usize>,
+
+    // Indexes into rows for all data
+    all_i:Vec<usize>,
+
 }
 
 impl Data {
@@ -761,13 +765,15 @@ impl Data {
             rows:Vec::<Vec<f64>>::new(),
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
+            all_i:Vec::<usize>::new(),
         }
     }
     fn reset(&mut self){
-            self.names = Vec::<String>::new();
-            self.rows = Vec::<Vec<f64>>::new();
-            self.testing_i = Vec::<usize>::new();
-            self.training_i = Vec::<usize>::new();
+        self.names = Vec::<String>::new();
+        self.rows = Vec::<Vec<f64>>::new();
+        self.testing_i = Vec::<usize>::new();
+        self.training_i = Vec::<usize>::new();
+        self.all_i = Vec::<usize>::new();
     }        
     fn ith_row(&self, i:usize) -> &Vec<f64> {
         &self.rows[i]
@@ -784,6 +790,7 @@ impl Data {
             }else{
                 self.testing_i.push(i);
             }
+            self.all_i.push(i);
         }
     }        
     fn add_row(&mut self, row:Vec<f64>){
@@ -903,7 +910,7 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
 fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
     let mut ret:Vec<(f64, f64)> = vec![];
     let mut inputs = Inputs::new();
-    let ref index = d.testing_i;
+    let ref index = d.all_i;
     for i in index {
         let ref r = d.rows[*i];
         for j in 0..d.names.len() {
@@ -1323,7 +1330,7 @@ fn main() {
                 x.2.is_finite()
             }).collect();
             
-            // Sort population by score, descending so the best are
+            // Sort population by score, ascending so the best are
             // earliest.  Allows the less good individuals to be easilly
             // pop'd off the end
             &population.0[..].sort_by(|b, a| {
@@ -1331,7 +1338,7 @@ fn main() {
                 let b2 = b.2;
                 b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
             });
-
+            //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
             // If the best individual has changed display it
             let best_idx = 0;
             let _best_id = population.0[best_idx].0;
@@ -1449,7 +1456,7 @@ fn main() {
                         population.1.insert(st, true);
                         let sc = score_individual(&n, &d_all, false);
                         {
-                            birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, s, n.to_string()));
+                            birth_death_recorder.write_line(&format!("{}/{}: {}", maxid, sc, n.to_string()));
                         }
                         population.0.push((maxid, n, sc));
                     }
