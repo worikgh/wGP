@@ -1189,7 +1189,91 @@ impl Recorder {
     }
 }
 
+mod population {
+    use std::collections::HashMap;    
+    
+    use super::Recorder;
+    use super::entropy::Randomness;
+    use super::Tree;
+    use super::Node;
+    //use super::NodeBox;
+    use super::Data;
+    use super::Mutator;
+    use super::score_individual;
 
+
+    struct Population<'a> {
+        trees:Vec<Tree>,
+        str_rep:HashMap<String, bool>,
+        maxid:usize,
+        mutator:&'a Mutator,
+        bnd_rec:&'a mut Recorder,
+        d_all:&'a mut Data,
+        mutate_prob:usize,
+    }
+    impl<'a> Population<'a> {
+        fn new(bnd_rec:&'a mut Recorder, mutator:&'a mut Mutator, d_all:&'a mut Data, mutate_prob:usize) -> Population<'a> {
+            Population{trees:Vec::new(), str_rep:HashMap::new(), maxid:0, bnd_rec:bnd_rec, d_all:d_all,
+                       mutator:mutator, mutate_prob:mutate_prob}
+        }
+        fn best_id(&self) -> usize {
+            self.trees[0].0
+        }
+        fn best_score(&self) -> f64 {
+            self.trees[0].2
+        }
+        fn len(&self) -> usize {
+            self.trees.len()
+        }
+        fn get_tree(&self, id:usize) -> &Node {
+            let a = self.trees.get(id);
+            let b = a.unwrap();//_or(panic!("Tried to get node {} does not exist", id));
+            &*b.1
+        }
+        fn addIndividual(&mut self, e:&mut Randomness) -> bool {
+            // Add a individuall.  If the individual is already in the
+            // population do not add it and return false
+            let n = Box::new(Node::new(e, &self.d_all.names, 0));
+            let st = n.to_string();
+            self.str_rep.entry(st.clone()).or_insert(false);
+
+            if !self.str_rep.get(&st).unwrap() {
+                // This node is unique
+                self.maxid += 1;
+                self.str_rep.insert(st, true);
+                let sc = score_individual(&n, self.d_all, false);
+                {
+                    self.bnd_rec.write_line(&format!("{}/{}: {}", self.maxid, sc, n.to_string()));
+                }
+                if sc == 0.0 {
+                    // Found the perfect individual.  
+                    println!("Found perfect Node! {}", n.to_string());
+                }
+                self.trees.push((self.maxid, n, sc));
+                true
+            }else{
+                false
+            }
+        }
+        fn mutate(&mut self, e:&mut Randomness) {
+            for i in 0..self.trees.len() {
+                if e.gen_range(0, 100) < self.mutate_prob {
+                    // Choosen this individual
+                    let old_individual = self.trees[i].1.copy();
+                    let olds = old_individual.to_string();
+                    self.str_rep.remove(&old_individual.to_string());
+                    let new_individual = self.mutator.mutate_tree(old_individual, &mut e);
+                    self.trees[i].2 = score_individual(&new_individual, self.d_all, false);
+                    self.trees[i].1 = new_individual;
+                    let news = self.trees[i].1.to_string();
+                    self.str_rep.insert(news.clone(), true);
+                    self.bnd_rec.write_line(format!("Mutate: {} {} --> {}",
+                                                    self.trees[i].0, olds, news).as_str());
+                }
+            }
+        }
+    }
+}
 
 fn main() {
     println!("Start");
@@ -1294,7 +1378,7 @@ fn main() {
 
         for generation in 0..num_generations {
             let s = format!("{} {} {} {} {}", generation,
-                            population.0[0].0, population.0[0].2,
+                            population.best_id(), population.0[0].2,
                             population.0.len(),
                             population.0[0].1.to_string());
             generation_recorder.write_line(&s[..]);
