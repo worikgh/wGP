@@ -1277,7 +1277,7 @@ fn main() {
             let s = format!("{} {} {} {} {}", generation,
                             population.best_id(), population.best_score(),
                             population.len(),
-                            population.get_tree(population.best_id()).1.to_string());
+                            population.get_tree_id(population.best_id()).1.to_string());
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
 

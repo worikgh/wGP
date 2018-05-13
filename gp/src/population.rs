@@ -109,11 +109,27 @@ impl<'a> Population<'a> {
         //     x.2.is_finite()
         // }).collect();
     }            
-    pub fn get_tree(&self, id:usize) -> &Tree {
-        let a = self.trees.get(id);
-        let b = a.unwrap();//_or(panic!("Tried to get node {} does not exist", id));
-        &*b
+    pub fn get_tree_id(&self, id:usize) -> &Tree {
+        // Get a tree based on its id
+        let mut idx:Option<usize> = None;
+        for i in 0..self.trees.len() {
+            if self.trees[i].0 == id {
+                idx = Some(i);
+                break;
+            }
+        }
+        match idx {
+            Some(idx) => &self.trees[idx],
+            None => panic!("Cannot get node with id: {}", id),
+        }
     }
+
+    pub fn get_tree(&self, id:usize) -> &Tree {
+        // Get a tree based on its order in self.trees. Used to
+        // inumerate all trees.  FIXME Use a iterator
+        &self.trees[id]
+    }
+
     pub fn add_individual(&mut self, e:&mut Randomness) -> bool {
         // Add a individuall.  If the individual is already in the
         // population do not add it and return false
@@ -149,7 +165,9 @@ impl<'a> Population<'a> {
         for x in self.trees.iter() {
             // Minimising score so we use inverse for selecting
             // crossover roulette selection
-            ret += 1.0/x.2;
+            if x.2.is_finite() {
+                ret += 1.0/x.2;
+            }
         }
         ret
     }
@@ -165,17 +183,19 @@ impl<'a> Population<'a> {
 
                     // The selector.  By setting the floor to more
                     // than 0 nodes with 0.0 score will not get
-                    // selected.  
-                    let s = e.gen_rangef64(0.000001, self.total_score());
-                    
+                    // selected.
+                    let ts = self.total_score();
+                    let s = e.gen_rangef64(0.000001, ts);
                     let mut cum_score = 0.0;
                     for i in 0..self.len() {
                         let t:&Tree = self.get_tree(i);
                         // Inverse as scores are being minimised
-                        cum_score += 1.0/t.2; 
-                        if cum_score >= s {
-                            p = Some(i);
-                            break;
+                        if t.2.is_finite() {
+                            cum_score += 1.0/t.2; 
+                            if cum_score >= s {
+                                p = Some(i);
+                                break;
+                            }
                         }
                     }
                     p
