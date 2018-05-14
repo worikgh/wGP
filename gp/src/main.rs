@@ -548,12 +548,8 @@ impl Node {
         }
 
         match self.o {
-            Operator::Terminal(TerminalType::Float(f)) => {
-                Some(f)
-            },
-            Operator::Terminal(TerminalType::Inputf64(ref s)) => {
-                Some(*(inputs.get(s).unwrap()))
-            },
+            Operator::Terminal(TerminalType::Float(f)) => Some(f),
+            Operator::Terminal(TerminalType::Inputf64(ref s)) => Some(*(inputs.get(s).unwrap())),
             Operator::If => {
                 let def = evaluate!(d);
                 let e:f64;
@@ -899,7 +895,6 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
             inputs.insert(h.as_str(), v);
         }
         let e = n.evaluate(&inputs).unwrap();
-        
         // Get the target
         let t = inputs.get(d.names.last().unwrap()).unwrap();
         sum_square += (e-t)*(e-t);
