@@ -1,23 +1,23 @@
 extern crate rand;
 extern crate statistical;
 
-use std::env;
-use std::path::Path;
-use std::time::SystemTime;
 //use statistical::mean;
-
+mod config;
+mod entropy;
+mod population;
+use config::Config;
+use entropy::Randomness;
+use population::Population;
 use std::collections::HashMap;
+use std::env;
 use std::fmt;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
-use std::io::BufWriter;
 use std::io::prelude::*;
-
-mod entropy;
-use entropy::Randomness;
-mod population;
-use population::Population;
+use std::path::Path;
+use std::time::SystemTime;
+use std::io::BufWriter;
 
 // The type of data that can be a terminal
 #[derive(Debug)]
@@ -1013,50 +1013,6 @@ fn add_simulation(data:Vec<(f64, f64)>, id:usize, fname:&str){
 }
     
 
-struct Config {
-    data:HashMap<String, String>,
-}
-
-impl Config {
-    fn new(cfg_file:&str)-> Config {
-        let file = File::open(cfg_file).unwrap();
-        let mut buf_reader = BufReader::new(file);
-        let mut contents = String::new();
-        buf_reader.read_to_string(&mut contents).unwrap();
-        let lines = contents.lines();
-        let mut config_hm = HashMap::new();
-        for line in lines {
-            let mut iter = line.split_whitespace();
-            let k = iter.next().unwrap();
-            let v = iter.map(|x| format!("{} ", x)).collect::<String>();
-            if k != "#" {
-                config_hm.insert(k.to_string(), v.trim().to_string());
-            }
-        }
-        Config{data:config_hm}
-    }
-    fn get_usize(&self, k:&str) -> Option<usize> {
-        let v = match self.data.get(k) {
-            Some(v) => v,
-            _ => panic!("Failed config. {} as usize", k),
-        };
-        let ret = match v.parse::<usize>() {
-            Ok(v) => Some(v),
-            _ => {
-                None
-            },
-                
-        };
-        ret
-    }
-    fn get_string(&self, k:&str) -> Option<String> {
-        match self.data.get(k) {
-            Some(v) => Some(v.clone()),
-            _ => None,
-        }
-    }        
-}
-
 /// rite out R script to generate plit of results
 fn write_plotting_script(input_data:&str, xlab:&str,
                          outfile:&str, r_script_file:&str,
@@ -1276,9 +1232,7 @@ fn main() {
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
 
-            // Do mutation
-            population.mutate(&mut e);
-            population.new_generation(generation);
+            population.new_generation(generation, &mut e);
             
             //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
             
