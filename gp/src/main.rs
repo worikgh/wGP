@@ -935,6 +935,12 @@ hist(objective, main=\"Objective Data\", density=10, breaks=30, xlab=\"XLAB\")
 hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, breaks=30)
 dev.off()
 
+png(\"OUTFILE_Solutions.png\", width=210, height=297, units=\"mm\", res=600)
+plot(data[,1], xlab=\"Index\", ylab=\"Objective\", main=\"Comparison of Models\", t='b', cex=.5, pch='x')
+points(data[, length(colnames(data))], cex=.5, col=2)
+
+dev.off()
+
 
 png(filename=\"IDGeneration.png\",
     width=210, height=297, units=\"mm\", res=600)
