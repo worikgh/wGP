@@ -72,71 +72,6 @@ enum Operator {
     Terminal(TerminalType),
 }
 
-pub struct Mutator {
-    names:Vec<String>,
-}
-impl Mutator {
-    fn mutate_tree(&self,i:NodeBox, e:&mut Randomness) -> NodeBox {
-        let names = &self.names;
-        // How many nodes are there?
-        let nc = i.count_nodes();
-        // In decision branch?
-        let dnc = match i.d {
-            Some(ref d) => {
-                // println!("Got d: {}", d.to_string());
-                d.count_nodes()
-            },
-            None => 0,
-        };
-        // In left child?
-        let lnc = match i.l {
-            Some(ref l) => l.count_nodes(),
-            None => 0,
-        };
-        // In right child
-        let rnc = match i.r {
-            Some(ref r) => r.count_nodes(),
-            None => 0,
-        };
-        // println!("dnc {} lnc {} rnc {} nc {}\n{}\n", dnc, lnc, rnc, nc, i.to_pretty_string(0));
-        assert_eq!(dnc+lnc+rnc, nc-1);
-
-        // Choose which tree to mutate
-        let selector = e.gen_range(0, nc+1);
-        if selector < dnc {
-            self.mutate_tree(i.d.unwrap(),e)
-        }else if selector < dnc + lnc {
-            self.mutate_tree(i.l.unwrap(),e)
-        }else if selector < dnc + lnc + rnc {
-            self.mutate_tree(i.r.unwrap(),e)
-        }else{
-            // Mutate i
-            // Two cases: This is a terminal, this is not terminal
-            if nc == 1 {
-                // i is a terminal.  FIXME  Mutate this!
-                i.copy()
-            }else{
-                // i is not terminal
-                let mut ret = i.copy();
-                let child = Node::new(e, names, 0);
-                // Select which branch
-                let selector = e.gen_range(0, nc-1);
-                if selector < lnc {
-                    ret.l = Some(NodeBox::new(child));
-                }else if selector < rnc + lnc {
-                    ret.r = Some(NodeBox::new(child));
-                }else if selector < dnc + lnc + rnc {
-                    ret.d = Some(NodeBox::new(child));
-                }else{
-                    panic!("selector {} is invalid lnc {} rnc {} dnc {} nc {}",
-                             selector, lnc, rnc, dnc, nc);
-                }
-                ret
-            }
-        }
-
-    }
-}
 // The basic unit of aAST
 type NodeBox = Box<Node>;
 pub struct Node {
@@ -838,40 +773,6 @@ impl Data {
     }
 }
 
-fn crossover(l:&NodeBox, r:&NodeBox, e:& mut Randomness) -> NodeBox {
-
-    
-    let p:NodeBox;// Parent
-    let c:NodeBox;// Child
-    if e.gen() > 0.0 {
-        p = (*l).random_node(e);
-        c = (*r).random_node(e);
-    }else{
-        c = (*l).random_node( e);
-        p = (*r).random_node( e);
-    }
-    // Make the new tree by copying c
-    let c = c.copy();
-
-    // The tree to return
-    let mut ret = p.copy();
-    
-    // Choose a branch off p to copy c to
-    match (*ret).r {
-        Some(_) => {
-            // p has two children.  Choose one randomly
-            if e.gen() > 0.0 {
-                // Left
-                (*ret).l = Some(c);
-            }else{
-                // Right
-                (*ret).r = Some(c);
-            }
-        },
-        None => (*ret).l = Some(c),
-    };
-    ret
-}
 
 
 // Calculate the score of a indvidual against the data Param n: The
@@ -1111,9 +1012,6 @@ dev.off()
     writer.write_all(script.to_string().as_bytes()).unwrap();
 }
 
-// Define a individual.  Consists of a node, a id, and a score.  Called
-// a Tree because it is not a sub-tree...
-type Tree = (usize, NodeBox, f64); 
 
 pub struct Recorder {
     // Manage writing data to a file.  The constructor takes a file
@@ -1156,29 +1054,24 @@ fn main() {
     
 
     let config = Config::new(cfg_file.as_str());
-    let num_generations = config.get_usize("num_generations").unwrap();
-    let mutate_prob = config.get_usize("mutate_prob").unwrap();
-    let max_population =  config.get_usize("max_population").unwrap();
-    let initial_population =  config.get_usize("initial_population").unwrap();
-    let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     let crossover_percent = config.get_usize("crossover_percent").unwrap();
     let data_file = config.get_string("data_file").unwrap();
     let generations_file = config.get_string("generations_file").unwrap();
+    let initial_population =  config.get_usize("initial_population").unwrap();
+    let max_population =  config.get_usize("max_population").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
-    let sim_id = config.get_string("id").unwrap();
-    let plot_xlab = config.get_string("plot_xlab").unwrap();
+    let num_generations = config.get_usize("num_generations").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
+    let plot_xlab = config.get_string("plot_xlab").unwrap();
     let r_script_file = config.get_string("r_script_file").unwrap();
-    let birthsanddeaths_file =
-        config.get_string("birthsanddeaths_file").unwrap();
-    // The seed is a string of usize numbers
-    let seed = config.get_string("seed").unwrap();
+    let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
     let seed:Vec<usize> = seed.split_whitespace().map(|x| x.parse::<usize>().unwrap()).collect();
+    let sim_id = config.get_string("id").unwrap();
+    let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
+    
 
-    // Set up output files
+    // Set up output file to record each generation
     let mut generation_recorder = Recorder::new(generations_file.as_str());
-    let mut birth_death_recorder =
-        Recorder::new(birthsanddeaths_file.as_str());
 
     // Write out the R script to plot the simulation
     write_plotting_script(model_data_file.as_str(),
@@ -1194,11 +1087,11 @@ fn main() {
     // let mut e = Randomness::new(&[11,2,3,422, 195]);
     let mut e = Randomness::new(&seed);
 
-    // Load the data
-    let mut d_all = Data::new();
-    d_all.read_data(data_file.as_str(), training_percent, &mut e);
 
     if let Some(ns) = config.get_string("eval") {
+        // Load the data
+        let mut d_all = Data::new();
+        d_all.read_data(data_file.as_str(), training_percent, &mut e);
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
         let s = (*n).to_string();
         println!("{} {}", s, score_individual(&n, &d_all, true));
@@ -1211,11 +1104,11 @@ fn main() {
         // string representation of every individual (Node::to_string())
         // to keep duplicates out of the population
         println!("Population start");
-        let mutator:Mutator = Mutator{names:d_all.names.clone()};
-        let mut population = Population::new(&mut birth_death_recorder, &mutator, &mut d_all, mutate_prob, model_data_file);
+
+        let mut population = Population::new(&config, &mut e);
 
         loop {
-            while !population.add_individual(&mut e) {}
+            while !population.add_individual() {}
             if population.len() == initial_population {
                 break;
             }
@@ -1232,7 +1125,7 @@ fn main() {
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
 
-            population.new_generation(generation, &mut e);
+            population.new_generation(generation);
             
             //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
             
@@ -1240,7 +1133,7 @@ fn main() {
             // population.len() * crossover_percent/100
             let ncross = population.len() * crossover_percent/100;
             for _ in 0..ncross {
-                population.do_crossover(&mut e);
+                population.do_crossover();
             }
             // Adjust population
             if population.len() > max_population {
@@ -1248,7 +1141,7 @@ fn main() {
                     let _ = population.delete_worst();
                 }
                 while population.len() < max_population {
-                    while !population.add_individual(&mut e) {}
+                    while !population.add_individual() {}
                 }                
             }
         }
