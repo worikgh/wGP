@@ -800,7 +800,11 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
         let t = inputs.get(d.names.last().unwrap()).unwrap();
         sum_square += (e-t)*(e-t);
     }
-    sum_square.sqrt()
+    // This transformation is a puzzle.  Take the square root to make
+    // it a Euclidian distance (in the dimensionality of the number of
+    // samples) and divide by the number of samples to scale it
+    sum_square.sqrt() / (index.len() as f64)
+        
 }
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
