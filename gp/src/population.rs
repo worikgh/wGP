@@ -88,25 +88,18 @@ impl<'a> Population<'a> {
     pub fn new_generation(&mut self, generation:usize){
 
         // Call every generation
-
+        //println!("New generation: {}", generation);
         // Create a new population of trees
         let mut new_trees:Vec<Tree> = Vec::new();
 
         // Eliminate all trees with no valid score
+        //println!("Cull: Population: {}", self.len());
         self.cull();
+        //println!("Culled Population: {}", self.len());
 
         // To be ready for a new population reset self.str_rep which
         // checks for duplicates
-        self.str_rep.clear();
-        
-        // Sort population by score, ascending so the best are
-        // earliest.  Allows the worst individuals to be easilly
-        // pop'd off the end
-        &self.trees[..].sort_by(|b, a| {
-            let a2 = a.2;
-            let b2 = b.2;
-            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
-        });
+        self.str_rep.clear();       
         
         // Generate some of new population from the old population. The
         // number of crossovers to do is (naturally) population.len()
@@ -126,9 +119,10 @@ impl<'a> Population<'a> {
                 self.str_rep.insert(st, true);
                 let nbstr = (*nb).to_string();
                 self.trees.push((id, nb, sc));
-                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}: {}",
-                                                l, r, id, nbstr));
+                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}: {}/{}",
+                                                l, r, id, nbstr, sc));
                 nc += 1;
+                //println!("Child {}", id);
             }
         }
             
@@ -150,8 +144,9 @@ impl<'a> Population<'a> {
                     let id = self.maxid;
                     new_trees.push((id, nb, sc));
                     self.str_rep.insert(sc_1.clone(), true);
-                    self.bnd_rec.write_line(format!("Mutate: {} --> {}: {} --> {}",
-                                                    id0, id, sc_0, sc_1).as_str());
+                    self.bnd_rec.write_line(format!("Mutate: {} --> {}: {} --> {}/{}",
+                                                    id0, id, sc_0, sc_1, sc).as_str());
+                    //println!("Mutate {} ", id);
                 }                
             }
         }
@@ -159,25 +154,39 @@ impl<'a> Population<'a> {
         let mut cp = 0; // Number copied
         let mut cx = 0; // Index into self.trees
         let ncp = self.len()*100/self.copy_prob;
-        while cp < ncp {
-            // FIXME This should be probabilistic ith roulette wheel
+        while cp < ncp && cx < self.len() {
+            // FIXME This should be probabilistic with roulette wheel
             // selection
             let st = (*self.trees[cx].1).to_string();
             self.str_rep.entry(st.clone()).or_insert(false);
             if !self.str_rep.get(st.as_str()).unwrap() {
-                self.maxid += 1;
-                let id = self.maxid;
-                new_trees.push((id, self.trees[cx].1.copy(), self.trees[cx].2));
+                new_trees.push((self.trees[cx].0, self.trees[cx].1.copy(), self.trees[cx].2));
                 self.str_rep.insert(st.clone(), true).unwrap();
                 cp += 1;
+                //println!("Gen {} Insert individual {} {}", generation, self.trees[cx].0, self.trees[cx].2);
+            }else{
+                //println!("Gen {} Abandon individual {} {}", generation, self.trees[cx].0, self.trees[cx].2);
             }
             cx += 1;
         }    
 
         // New population is created
         self.trees = new_trees;
+        self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
 
+        // Sort population by score, ascending so the best are
+        // earliest.  Allows the worst individuals to be easilly
+        // pop'd off the end
+        &self.trees[..].sort_by(|b, a| {
+            let a2 = a.2;
+            let b2 = b.2;
+            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
+        });
+
+        //println!("G {} <Sorted {} Best {} or {}", generation, self.trees[0].2<self.trees[self.trees.len()-1].2, self.get_tree_id(self.best_id()).2, self.trees[0].2);
+        // If the best individual has changed display it
         // Adjust population
+        //println!("Population: {}", self.len());
         if self.len() > self.max_population {
             while self.len() > self.max_population {
                 let _ = self.delete_worst();
@@ -186,14 +195,9 @@ impl<'a> Population<'a> {
                 while !self.add_individual() {}
             }                
         }
-
-    
-        self.cull();
-
+        //println!("Population: {}", self.len());
         self.bnd_rec.buffer.flush().unwrap(); 
 
-
-        // If the best individual has changed display it
         self.check_peek(generation);
         
     }
@@ -257,7 +261,7 @@ impl<'a> Population<'a> {
             self.str_rep.insert(st, true);
             let sc = score_individual(&n, &self.d_all, false);
             {
-                self.bnd_rec.write_line(&format!("{}/{}: {}", self.maxid, sc, n.to_string()));
+                self.bnd_rec.write_line(&format!("Create {}/{} {}", self.maxid, sc, n.to_string()));
                 if sc == 0.0 {
                     // Found the perfect individual.  
                     println!("Found perfect Node! {}", n.to_string());
@@ -277,10 +281,8 @@ impl<'a> Population<'a> {
     pub fn total_score(&self) -> f64 {
         let mut ret:f64 = 0.0;
         for x in self.trees.iter() {
-            // Minimising score so we use inverse for selecting
-            // crossover roulette selection
             if x.2.is_finite() {
-                ret += 1.0/x.2;
+                ret += x.2;
             }
         }
         ret
@@ -303,9 +305,9 @@ impl<'a> Population<'a> {
                     let mut cum_score = 0.0;
                     for i in 0..self.len() {
                         let t:&Tree = self.get_tree(i);
-                        // Inverse as scores are being minimised
+
                         if t.2.is_finite() {
-                            cum_score += 1.0/t.2; 
+                            cum_score += t.2; 
                             if cum_score >= s {
                                 p = Some(i);
                                 break;

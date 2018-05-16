@@ -777,8 +777,22 @@ impl Data {
 
 // Calculate the score of a indvidual against the data Param n: The
 // individual Param d: The data to use.  'use_testing' is true if the
-// individual is to be scored on the testing set
-fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
+// individual is to be scored on the testing set. The returned value
+// is Adjusted R-squared.  This is a quantity to maximise.
+fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
+
+    // Calculate adjusted R-squared
+    // ----------------------------
+    // n: The number of data points
+    // p: The number of parameters (input nodes)
+    // yb: Mean response (y-bar)
+    // yh: Estimated response (y-hat)
+    // y: Actual response
+    // ar2: Adjusted R-squared
+    // ar2 = 1 - ((n-1)/(n-p))(1-(sum((yh-y)^2)/sum((y-yb)^2)))
+    // Due to "Linear Models with R" bu Julian J. Faraway 2005
+
+    
     let mut inputs = Inputs::new();
 
     let index:&Vec<usize>;
@@ -787,7 +801,14 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     }else{
         index = &d.training_i;
     }
-    let mut sum_square = 0.0;
+
+    let mut yb:f64;;
+    let mut yh:Vec<f64> = Vec::new();
+    let mut y:Vec<f64> = Vec::new();
+    let n = index.len() as f64;
+    // d.names includes parameters and response, so minus 1;
+    let p = (d.names.len() - 1) as f64; 
+    
     for i in index {
         let ref r = d.ith_row(*i);
         for j in 0..d.names.len() {
@@ -795,18 +816,21 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
             let h = d.names[j].clone();
             inputs.insert(h.as_str(), v);
         }
-        let e = n.evaluate(&inputs).unwrap();
+        let e = node.evaluate(&inputs).unwrap();
         // Get the target
         let t = inputs.get(d.names.last().unwrap()).unwrap();
-        sum_square += (e-t)*(e-t);
+        y.push(*t);
+        yh.push(e);
     }
-    // This transformation is a puzzle.  Take the square root to make
-    // it a Euclidian distance (in the dimensionality of the number of
-    // samples) and divide by the number of samples to scale it.  It
-    // should not be too critical (??? Test that ???) so long as the
-    // evaluation is monotonic.
-    sum_square.sqrt() / (index.len() as f64)
-        
+
+
+    // ar2 = 1 - ((n-1)/(n-p))(1-(sum((yh-y)^2)/sum((y-yb)^2)))
+    let sum_yh_y_2:f64 = yh.iter().zip(y.clone()).map(|(a,b)| (a-b)*(a-b)).sum();
+    yb = y.iter().sum();
+    yb /= y.len() as f64;
+    let sum_y_yb_2:f64 = y.iter().map(|x| (x-yb)*(x-yb)).sum();
+
+    1.0-((n-1.0)/(n-p))*(1.0-sum_yh_y_2/sum_y_yb_2)
 }
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
@@ -972,13 +996,14 @@ data <- cbind(c(0, diff(q[[1]])),q[[2]], q[[3]], q[[4]], q[[5]])
 
 colnames(data) <- c(\"Sec\", \"Gen\", \"ID\", \"Eval\", \"Pop\")
 
-
-gen <- data[,\"Gen\"]
-pop <- data[,\"Pop\"]
+gen <- data[,'Gen']
+pop <- data[,'Pop']
 eval <- data[,'Eval']
-
+eval.2 <- eval-min(eval)
+pop.2 <- (pop-min(pop))
+pop.2 <- pop.2*(max(eval.2)/max(pop.2))
 ## Normalise pop to same scale as eval
-pop.2 <-  (pop - min(pop))*max(eval)
+
 
 
 ## Define Margins. The trick is to use give as much space possible on
@@ -988,30 +1013,32 @@ par(mar=c(5, 12, 4, 4) + 0.1)
 ## Plot the first time series. Notice that you don’t have to draw the
 ## axis nor the labels
 
-
-plot(gen, eval.2, axes=F, ylim=range(eval.2), xlab=\"\", ylab=\"\", type=\"l\",lty=2, main=\"\",xlim=range(gen),lwd=2, col=2)
+plot(gen, eval.2, axes=F, ylim=range(eval.2), xlab='', ylab='', type='l',lty=2, main='',xlim=range(gen),lwd=2, col=2)
 
 labels <- signif(seq(from=min(eval), to=max(eval), length.out=8),  4)
 at <- seq(from=min(eval.2), to=max(eval.2), length.out=8)
 axis(2, at=at, labels=labels, lwd=2,line=3.5)
-mtext(2,text=\"Eval\",line=5.5)
+mtext(2,text='Eval',line=5.5)
 
 ## Plot the third time series. Again the line parameter are both
 ## further increased.
 
 par(new=T)
-plot(gen, pop.2, axes=F, ylim=range(pop.2), xlab=\"\", ylab=\"\", type=\"l\",lty=3, main=\"\",xlim=range(gen),lwd=2, col=3)
-axis(2, ylim=range(pop),lwd=2,line=7)
-mtext(2,text=\"Population\",line=9)
+plot(gen, pop.2, axes=F, ylim=range(pop.2), xlab='', ylab='', type='l',lty=3, main='',xlim=range(gen),lwd=2, col=3)
+labels <- signif(seq(from=min(pop), to=max(pop), length.out=8),  4)
+at <- seq(from=min(pop.2), to=max(pop.2), length.out=8)
+axis(2, at=at, labels=labels, lwd=2, line=7)
+##axis(2, ylim=range(pop),lwd=2,line=7)
+mtext(2,text='Population',line=9)
 
 ##We can now draw the X-axis, which is of course shared by all the
 ##three time-series.
 
 axis(1,pretty(range(gen),10))
-mtext(\"Generation\",side=1,col=\"black\",line=2)
+mtext('Generation',side=1,col='black',line=2)
 
 ##And then plot the legend.
-legend(x=\"topleft\", legend=c(\"Sec\",\"Eval\",\"Pop\"),lty=c(1,2,3), col=c(1,2,3), bty='n') 
+legend(x='topleft', legend=c('Eval','Pop'),lty=c(2,3), col=c(2,3), bty='n') 
 dev.off()
 ";
     let script = script.replace("SIMULATIONS", input_data);
