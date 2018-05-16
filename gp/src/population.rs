@@ -22,12 +22,15 @@ pub struct Population<'b> {
     maxid:usize,
     bnd_rec: Recorder,
     d_all:Data,
+    crossover_percent:usize,
     mutate_prob:usize,
+    copy_prob:usize,
     best_id:usize,
     best_individual:String,
     model_data_file:String,
     e:&'b mut Randomness,
     input_names:Vec<String>,
+    max_population:usize,
 }
 impl<'a> Population<'a> {
     pub fn new(config:&Config, e:&'a mut Randomness) ->
@@ -40,10 +43,14 @@ impl<'a> Population<'a> {
                        input_names:d_all.names.clone(),
                        maxid:0, e:e,
                        bnd_rec:Recorder::new(config.get_string("birthsanddeaths_file").unwrap().as_str()),
+                       crossover_percent:config.get_usize("crossover_percent").unwrap(),
                        d_all:d_all,
+                       max_population:config.get_usize("max_population").unwrap(),
                        mutate_prob:config.get_usize("mutate_prob").unwrap(),
+                       copy_prob:config.get_usize("copy_prob").unwrap(),
                        best_id:0, best_individual:"".to_string(),
-                       model_data_file:config.get_string("model_data_file").unwrap()}
+                       model_data_file:config.get_string("model_data_file").unwrap(),
+            }
         }
     pub fn best_id(&self) -> usize {
         self.trees[0].0
@@ -82,19 +89,109 @@ impl<'a> Population<'a> {
 
         // Call every generation
 
-        // Do mutation
-        self.mutate();
-        self.cull();
-        self.bnd_rec.buffer.flush().unwrap(); 
+        // Create a new population of trees
+        let mut new_trees:Vec<Tree> = Vec::new();
 
+        // Eliminate all trees with no valid score
+        self.cull();
+
+        // To be ready for a new population reset self.str_rep which
+        // checks for duplicates
+        self.str_rep.clear();
+        
         // Sort population by score, ascending so the best are
-        // earliest.  Allows the less good individuals to be easilly
+        // earliest.  Allows the worst individuals to be easilly
         // pop'd off the end
         &self.trees[..].sort_by(|b, a| {
             let a2 = a.2;
             let b2 = b.2;
             b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
         });
+        
+        // Generate some of new population from the old population. The
+        // number of crossovers to do is (naturally) population.len()
+        // * crossover_percent/100
+        let ncross = self.len() * self.crossover_percent/100;
+        
+        let mut nc = 0;
+        while nc < ncross  {
+            let (nb, l, r) = self.do_crossover();
+            let st = (*nb).to_string();
+            self.str_rep.entry(st.clone()).or_insert(false);
+            if !self.str_rep.get(&st).unwrap() {
+                // A unique child
+                let sc = score_individual(&nb, &self.d_all, true);
+                self.maxid += 1;
+                let id = self.maxid;
+                self.str_rep.insert(st, true);
+                let nbstr = (*nb).to_string();
+                self.trees.push((id, nb, sc));
+                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}: {}",
+                                                l, r, id, nbstr));
+                nc += 1;
+            }
+        }
+            
+    
+        // Do mutation.  Take mut_probab % of trees, mutate them, add
+        // them to the new population
+        for i in 0..self.trees.len() {
+            if self.e.gen_range(0, 100) < self.mutate_prob {
+                let sc_0:String = (*self.trees[i].1).to_string();
+                let id0 = self.trees[i].0;
+                let t = self.trees[i].1.copy();
+                let nb = self.mutate_tree(t);
+                let sc_1:String = (*nb).to_string();
+                self.str_rep.entry(sc_1.clone()).or_insert(false);
+                if !self.str_rep.get(&sc_1).unwrap() {
+                    // Unique in the new population
+                    let sc = score_individual(&nb, &self.d_all, true);
+                    self.maxid += 1;
+                    let id = self.maxid;
+                    new_trees.push((id, nb, sc));
+                    self.str_rep.insert(sc_1.clone(), true);
+                    self.bnd_rec.write_line(format!("Mutate: {} --> {}: {} --> {}",
+                                                    id0, id, sc_0, sc_1).as_str());
+                }                
+            }
+        }
+        // Copy the best trees.
+        let mut cp = 0; // Number copied
+        let mut cx = 0; // Index into self.trees
+        let ncp = self.len()*100/self.copy_prob;
+        while cp < ncp {
+            // FIXME This should be probabilistic ith roulette wheel
+            // selection
+            let st = (*self.trees[cx].1).to_string();
+            self.str_rep.entry(st.clone()).or_insert(false);
+            if !self.str_rep.get(st.as_str()).unwrap() {
+                self.maxid += 1;
+                let id = self.maxid;
+                new_trees.push((id, self.trees[cx].1.copy(), self.trees[cx].2));
+                self.str_rep.insert(st.clone(), true).unwrap();
+                cp += 1;
+            }
+            cx += 1;
+        }    
+
+        // New population is created
+        self.trees = new_trees;
+
+        // Adjust population
+        if self.len() > self.max_population {
+            while self.len() > self.max_population {
+                let _ = self.delete_worst();
+            }
+            while self.len() < self.max_population {
+                while !self.add_individual() {}
+            }                
+        }
+
+    
+        self.cull();
+
+        self.bnd_rec.buffer.flush().unwrap(); 
+
 
         // If the best individual has changed display it
         self.check_peek(generation);
@@ -161,12 +258,12 @@ impl<'a> Population<'a> {
             let sc = score_individual(&n, &self.d_all, false);
             {
                 self.bnd_rec.write_line(&format!("{}/{}: {}", self.maxid, sc, n.to_string()));
+                if sc == 0.0 {
+                    // Found the perfect individual.  
+                    println!("Found perfect Node! {}", n.to_string());
+                }
+                self.trees.push((self.maxid, n, sc));
             }
-            if sc == 0.0 {
-                // Found the perfect individual.  
-                println!("Found perfect Node! {}", n.to_string());
-            }
-            self.trees.push((self.maxid, n, sc));
             true
         }else{
             false
@@ -188,7 +285,7 @@ impl<'a> Population<'a> {
         }
         ret
     }
-    pub fn do_crossover(&mut self) {
+    pub fn do_crossover(&mut self) -> (NodeBox, usize, usize){
         // Choose a node from population to participate in crossover.
         // The higher the score the node got last generation the
         // higher the probability it will be selected to be
@@ -224,52 +321,9 @@ impl<'a> Population<'a> {
         let i0 = get_node!().unwrap();
         let i1 = get_node!().unwrap();
 
-        let mut flag = false;  // Set to true if pc is unique
-
-        let  pc; // Node resulting from crossover
-        pc = self.crossover(i0, i1);
-
-        let st = pc.to_string();
-        self.str_rep.entry(st.clone()).or_insert(false);
-        if !self.str_rep.get(&st).unwrap() {
-            // This node is unique
-            self.str_rep.insert(st, true);
-            flag =  true;
-        }else{
-        }
-        
-        if flag {
-            self.maxid += 1;  // Done here so it can be passed to record_birth
-            let s = score_individual(&pc, &self.d_all, false);
-            self.bnd_rec.write_line(&format!("{} + {} = {}/{}: {}", i0, i1, self.maxid, s, pc.to_string()));
-        // }
-
-        // if flag {
-            let str_pc = pc.to_string();
-            self.trees.push((self.maxid, pc, s));
-            if s == 0.0 {
-                // Found the perfect individual.  Quit
-                println!("Found perfect Node! {}", str_pc);
-            }
-        }
+        (self.crossover(i0, i1), i0, i1)
     }
-    pub fn mutate(&mut self) {
-        for i in 0..self.trees.len() {
-            if self.e.gen_range(0, 100) < self.mutate_prob {
-                // Choosen this individual
-                let old_individual = self.trees[i].1.copy();
-                let olds = old_individual.to_string();
-                self.str_rep.remove(&old_individual.to_string());
-                let new_individual = self.mutate_tree(old_individual);
-                self.trees[i].2 = score_individual(&new_individual, &self.d_all, false);
-                self.trees[i].1 = new_individual;
-                let news = self.trees[i].1.to_string();
-                self.str_rep.insert(news.clone(), true);
-                self.bnd_rec.write_line(format!("Mutate: {} {} --> {}",
-                                                self.trees[i].0, olds, news).as_str());
-            }
-        }
-    }
+
     fn mutate_tree(&mut self,i:NodeBox) -> NodeBox {
         //let names = &self.names;
         // How many nodes are there?
@@ -364,5 +418,5 @@ impl<'a> Population<'a> {
         };
         ret
     }
-}
+}    
 

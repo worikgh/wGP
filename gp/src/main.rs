@@ -802,7 +802,9 @@ fn score_individual(n:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     }
     // This transformation is a puzzle.  Take the square root to make
     // it a Euclidian distance (in the dimensionality of the number of
-    // samples) and divide by the number of samples to scale it
+    // samples) and divide by the number of samples to scale it.  It
+    // should not be too critical (??? Test that ???) so long as the
+    // evaluation is monotonic.
     sum_square.sqrt() / (index.len() as f64)
         
 }
@@ -940,8 +942,22 @@ hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, brea
 dev.off()
 
 png(\"OUTFILE_Solutions.png\", width=210, height=297, units=\"mm\", res=600)
-plot(data[,1], xlab=\"Index\", ylab=\"Objective\", main=\"Comparison of Models\", t='b', cex=.5, pch='x')
-points(data[, length(colnames(data))], cex=.5, col=2)
+c <- ceiling(sqrt(dim(plot.data)[2]-1))
+par(mfrow=c(c,c))
+plot.data <- data[order(data[,1]),]
+x <- plot.data[,1]
+y <- plot.data[, dim(plot.data)[2]]
+
+plot(x=x, y=y,
+     xlab='Objective',
+     ylab='Best Estimate',
+     main='Comparison of Models', t='p', cex=.75, pch='x')
+for(i in 2:(dim(plot.data)[2]-1)){
+    plot(x=x, y=plot.data[,i],
+         xlab='Objective',
+         ylab='Estimate',
+         main='Comparison of Models', t='p', cex=.75, pch='x')
+}
 
 dev.off()
 
@@ -1064,11 +1080,9 @@ fn main() {
     
 
     let config = Config::new(cfg_file.as_str());
-    let crossover_percent = config.get_usize("crossover_percent").unwrap();
     let data_file = config.get_string("data_file").unwrap();
     let generations_file = config.get_string("generations_file").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
-    let max_population =  config.get_usize("max_population").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
     let num_generations = config.get_usize("num_generations").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
@@ -1139,21 +1153,6 @@ fn main() {
             
             //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
             
-            // The number of crossovers to do is (naturally)
-            // population.len() * crossover_percent/100
-            let ncross = population.len() * crossover_percent/100;
-            for _ in 0..ncross {
-                population.do_crossover();
-            }
-            // Adjust population
-            if population.len() > max_population {
-                while population.len() > max_population {
-                    let _ = population.delete_worst();
-                }
-                while population.len() < max_population {
-                    while !population.add_individual() {}
-                }                
-            }
         }
         println!("Bye!");
     }
