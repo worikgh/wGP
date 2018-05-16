@@ -942,9 +942,9 @@ hist(objective-best.estimate, main=\"Differences\", density=10, freq=FALSE, brea
 dev.off()
 
 png(\"OUTFILE_Solutions.png\", width=210, height=297, units=\"mm\", res=600)
+plot.data <- data[order(data[,1]),]
 c <- ceiling(sqrt(dim(plot.data)[2]-1))
 par(mfrow=c(c,c))
-plot.data <- data[order(data[,1]),]
 x <- plot.data[,1]
 y <- plot.data[, dim(plot.data)[2]]
 
@@ -974,13 +974,11 @@ colnames(data) <- c(\"Sec\", \"Gen\", \"ID\", \"Eval\", \"Pop\")
 
 
 gen <- data[,\"Gen\"]
-sec <- data[,\"Sec\"]
 pop <- data[,\"Pop\"]
 eval <- data[,'Eval']
 
-## Normalise eval and pop to same scale as sec
-eval.2 <- (eval - min(eval))*max(sec)
-pop.2 <-  (pop - min(pop))*max(sec)
+## Normalise pop to same scale as eval
+pop.2 <-  (pop - min(pop))*max(eval)
 
 
 ## Define Margins. The trick is to use give as much space possible on
@@ -991,12 +989,6 @@ par(mar=c(5, 12, 4, 4) + 0.1)
 ## axis nor the labels
 
 
-plot(gen, sec, axes=F, ylim=c(0,max(sec)), xlab=\"\", ylab=\"\",type=\"l\",col=\"black\", main=\"ID\",xlim=range(gen))
-
-axis(2, ylim=c(0,max(sec)),col=\"black\",lwd=2)
-mtext(2,text=\"Sec\",line=2)
-
-par(new=T)
 plot(gen, eval.2, axes=F, ylim=range(eval.2), xlab=\"\", ylab=\"\", type=\"l\",lty=2, main=\"\",xlim=range(gen),lwd=2, col=2)
 
 labels <- signif(seq(from=min(eval), to=max(eval), length.out=8),  4)
@@ -1142,6 +1134,7 @@ fn main() {
 
 
         for generation in 0..num_generations {
+            population.new_generation(generation);
             let s = format!("{} {} {} {} {}", generation,
                             population.best_id(), population.best_score(),
                             population.len(),
@@ -1149,7 +1142,6 @@ fn main() {
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
 
-            population.new_generation(generation);
             
             //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
             
