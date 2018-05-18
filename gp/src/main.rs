@@ -1099,6 +1099,8 @@ impl Recorder {
 fn main() {
     println!("Start");
 
+    // Get configuration file.  Will use file names 'config' if no
+    // file name provided as a argument FIXME:  Don't have a default!!!
     let args: Vec<_> = env::args().collect();
     let cfg_file:String;
     if args.len() > 1 {
@@ -1106,9 +1108,9 @@ fn main() {
     }else{
         cfg_file = "config".to_string();
     }
-    
-
     let config = Config::new(cfg_file.as_str());
+
+    // Load configuration data
     let data_file = config.get_string("data_file").unwrap();
     let generations_file = config.get_string("generations_file").unwrap();
     let initial_population =  config.get_usize("initial_population").unwrap();
@@ -1122,11 +1124,11 @@ fn main() {
     let sim_id = config.get_string("id").unwrap();
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     
-
-    // Set up output file to record each generation
+    // Set up output file to record each generation:  FIXME move this to population
     let mut generation_recorder = Recorder::new(generations_file.as_str());
 
-    // Write out the R script to plot the simulation
+    // Write out the R script to plot the simulation.  Do this first
+    // as it can be used as a long simulation is proceeding
     write_plotting_script(model_data_file.as_str(),
                           plot_xlab.as_str(),
                           plot_file.as_str(),
@@ -1136,11 +1138,14 @@ fn main() {
     );
 
     // The source of entropy.  This is done this way so the same seed
-    // can be used to produce repeatable results
-    // let mut e = Randomness::new(&[11,2,3,422, 195]);
+    // can be used to produce repeatable results let mut e =
+    // Randomness::new(&[11,2,3,422, 195]); FIXME This is a sitting
+    // duck for usiing traits.
     let mut e = Randomness::new(&seed);
 
-
+    // Two modes of operation: One is eevaluating a single model (the
+    // model is passed using the 'eval' configuration keyword) or run
+    // a simulation
     if let Some(ns) = config.get_string("eval") {
         // Load the data
         let mut d_all = Data::new();
@@ -1150,27 +1155,24 @@ fn main() {
         println!("{} {}", s, score_individual(&n, &d_all, true));
         
     }else{
+        // Running a simulation
         
-
-        // Create a population. The first part of the tuple is the set of
-        // trees that is the population.  The second part stores the
-        // string representation of every individual (Node::to_string())
-        // to keep duplicates out of the population
+        // Create a population. 
         println!("Population start");
-
         let mut population = Population::new(&config, &mut e);
-
         loop {
-            while !population.add_individual() {}
+            // Random individual.  Returns true when a unique
+            // individual is created.
+            while !population.add_individual() {} 
             if population.len() == initial_population {
                 break;
             }
         }
         println!("Created initial population");
-        // For each member of the population calculate a evaluation
-
 
         for generation in 0..num_generations {
+            // Main loop
+            
             population.new_generation(generation);
             let s = format!("{} {} {} {} {}", generation,
                             population.best_id(), population.best_score(),
@@ -1178,10 +1180,6 @@ fn main() {
                             population.get_tree_id(population.best_id()).1.to_string());
             generation_recorder.write_line(&s[..]);
             generation_recorder.buffer.flush().unwrap();
-
-            
-            //println!("Best pop sc: {} Worst: {}", population.0[0].2, population.0[population.0.len()-1].2);
-            
         }
         println!("Bye!");
     }
