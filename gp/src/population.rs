@@ -85,17 +85,47 @@ impl<'a> Population<'a> {
             }
         }
     }
+    fn stats(&self) -> String {
+        let mut n0 = 0; // Cound individuals with score 0
+        let mut n1 = 0; // Cound individuals with score > 0
+        let mut nn = 0;  // Cound individuals with score > not a number
+        let mut cum = 0.0; // Cumulative score
+        let mut max = 0.0; // Max score
+        let mut min = 1.0; // Minimum score
+        
+        for i in 0..self.len() {
+            let sc = self.trees[i].2;
+            if sc.is_finite() {
+                cum += sc;
+                if sc < min {
+                    min = sc;
+                }
+                if sc > max {
+                    max = sc;
+                }
+                if sc == 0.0 {
+                    n0 += 1;
+                }else{
+                    n1 += 1;
+                }
+            }else{
+                nn += 1;
+            }
+        }
+        format!("Total score: {} mean score {} population {} min {} max {} n0 {} n1 {} nn {} Zero?  {}",
+                cum, cum/(self.len() as f64), self.len(), min, max, n0, n1, nn, n0+n1+nn-self.len())
+    }
     pub fn new_generation(&mut self, generation:usize){
 
         // Call every generation
-        //println!("New generation: {}", generation);
+        println!("New generation: {} {}", generation, self.stats());
         // Create a new population of trees
         let mut new_trees:Vec<Tree> = Vec::new();
 
         // Eliminate all trees with no valid score
         //println!("Cull: Population: {}", self.len());
         self.cull();
-        //println!("Culled Population: {}", self.len());
+        println!("Culled Population: {}", self.len());
 
         // To be ready for a new population reset self.str_rep which
         // checks for duplicates
@@ -119,12 +149,15 @@ impl<'a> Population<'a> {
                 self.str_rep.insert(st, true);
                 let nbstr = (*nb).to_string();
                 self.trees.push((id, nb, sc));
-                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}: {}/{}",
-                                                l, r, id, nbstr, sc));
-                nc += 1;
-                //println!("Child {}", id);
+                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}/{}: {}",
+                                                l, r, id, sc, nbstr));
+                //println!("Child {} l {} r {} {}", id, l, r, nbstr);
+            }else{
+                //println!("Not unique l {} r {} new {}",l,r,st);
             }
+            nc += 1;
         }
+        println!("After crossover");
             
     
         // Do mutation.  Take mut_probab % of trees, mutate them, add
@@ -150,6 +183,7 @@ impl<'a> Population<'a> {
                 }                
             }
         }
+        println!("After mutation");
         // Copy the best trees.
         let mut cp = 0; // Number copied
         let mut cx = 0; // Index into self.trees
@@ -169,33 +203,49 @@ impl<'a> Population<'a> {
             }
             cx += 1;
         }    
+        println!("After copy");
 
         // New population is created
         self.trees = new_trees;
-        self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
 
-        // Sort population by score, ascending so the best are
+        // Sort population by score, descending so the best are
         // earliest.  Allows the worst individuals to be easilly
         // pop'd off the end
-        &self.trees[..].sort_by(|b, a| {
+        self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
+        &self.trees[..].sort_by(|a,b| {
             let a2 = a.2;
             let b2 = b.2;
             b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
         });
 
-        //println!("G {} <Sorted {} Best {} or {}", generation, self.trees[0].2<self.trees[self.trees.len()-1].2, self.get_tree_id(self.best_id()).2, self.trees[0].2);
+        println!("G {} <Sorted {} Best {} or {}", generation, self.trees[0].2<self.trees[self.trees.len()-1].2, self.get_tree_id(self.best_id()).2, self.trees[0].2);
         // If the best individual has changed display it
         // Adjust population
-        //println!("Population: {}", self.len());
+        let mut n1 = 0; // Number of individuals deleted
+        let mut n2 = 0; // Number of individuals added
+        println!("Population A: {}", self.len());
         if self.len() > self.max_population {
             while self.len() > self.max_population {
                 let _ = self.delete_worst();
+                n1 += 1;
             }
-            while self.len() < self.max_population {
-                while !self.add_individual() {}
-            }                
         }
-        //println!("Population: {}", self.len());
+        let flag =  self.len() < self.max_population; // Set if new individuals  to be added
+        while self.len() < self.max_population {
+            while !self.add_individual() {}
+            n2 += 1;
+        }
+        if flag {
+            // Sort again as we added new individuals
+            self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
+            &self.trees[..].sort_by(|a,b| {
+                let a2 = a.2;
+                let b2 = b.2;
+                b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
+            });
+
+        }
+        println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
         self.bnd_rec.buffer.flush().unwrap(); 
 
         self.check_peek(generation);
@@ -203,10 +253,11 @@ impl<'a> Population<'a> {
     }
     pub fn cull(&mut self) {
         // Remove individuals that we can no longer let live.  Eugenics!
+        // Individuals with score NAN or 0
         let mut z:Vec<Tree> = Vec::new();
         for i in 0..self.trees.len(){
             let (id, ev) = (self.trees[i].0, self.trees[i].2);
-            if ev.is_finite() {
+            if ev.is_finite() && ev > 0.0{
                 let t:Tree = (self.trees[i].0, self.trees[i].1.copy(), ev);
                 z.push(t);
             }else{
@@ -262,7 +313,7 @@ impl<'a> Population<'a> {
             let sc = score_individual(&n, &self.d_all, false);
             {
                 self.bnd_rec.write_line(&format!("Create {}/{} {}", self.maxid, sc, n.to_string()));
-                if sc == 0.0 {
+                if sc == 1.0 {
                     // Found the perfect individual.  
                     println!("Found perfect Node! {}", n.to_string());
                 }
@@ -300,17 +351,32 @@ impl<'a> Population<'a> {
                     // The selector.  By setting the floor to more
                     // than 0 nodes with 0.0 score will not get
                     // selected.
-                    let ts = self.total_score();
-                    let s = self.e.gen_rangef64(0.000001, ts);
-                    let mut cum_score = 0.0;
-                    for i in 0..self.len() {
-                        let t:&Tree = self.get_tree(i);
-
-                        if t.2.is_finite() {
-                            cum_score += t.2; 
-                            if cum_score >= s {
-                                p = Some(i);
-                                break;
+                    let ts = self.total_score(); // FIXME  Cache this!
+                    if ts == 0.0 {
+                        // No model is better than the mean so just pick at random
+                        let len = self.len();
+                        let i = self.e.gen_range(0, len);
+                        //println!("No model better than mean: len: {} i {}", len, i);
+                        p = Some(i);
+                    }else{
+                        let s = self.e.gen_rangef64(0.000001, ts);
+                        //println!("Better than mean available: s: {}", s);
+                        let mut cum_score = 0.0;
+                        let mut ms = 0.0; // Max score so far
+                        for i in 0..self.len() {
+                            let t:&Tree = self.get_tree(i);
+                            
+                            if t.2.is_finite() {
+                                if t.2 > ms {
+                                    ms = t.2;
+                                    //println!("Max score exceeded s {} cum_score {} i {} ms {}", s, cum_score, i, ms);
+                                }
+                                cum_score += t.2; 
+                                if cum_score >= s {
+                                    //println!("Got tree: i: {} cum_score {} s {} len {} ts {}", i, cum_score, s, self.len(), ts);
+                                    p = Some(i);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -322,7 +388,7 @@ impl<'a> Population<'a> {
         // Choose two trees to cross over
         let i0 = get_node!().unwrap();
         let i1 = get_node!().unwrap();
-
+        
         (self.crossover(i0, i1), i0, i1)
     }
 
