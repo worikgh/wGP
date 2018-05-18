@@ -790,6 +790,7 @@ fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     // y: Actual response
     // ar2: Adjusted R-squared
     // ar2 = 1 - ((n-1)/(n-p))(1-(sum((yh-y)^2)/sum((y-yb)^2)))
+    // ar2 = 1-(RSS/(n-p))/(TSS/(n-1)) RSS = sum((yh-y)^2) TSS = sum((y-yb)^2)
     // Due to "Linear Models with R" bu Julian J. Faraway 2005
 
     
@@ -824,13 +825,22 @@ fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     }
 
 
-    // ar2 = 1 - ((n-1)/(n-p))(1-(sum((yh-y)^2)/sum((y-yb)^2)))
-    let sum_yh_y_2:f64 = yh.iter().zip(y.clone()).map(|(a,b)| (a-b)*(a-b)).sum();
+    // ar2 = 1-(RSS/(n-p))/(TSS/(n-1)) RSS = sum((yh-y)^2) TSS = sum((y-yb)^2)
     yb = y.iter().sum();
     yb /= y.len() as f64;
-    let sum_y_yb_2:f64 = y.iter().map(|x| (x-yb)*(x-yb)).sum();
+    let rss:f64 = yh.iter().zip(y.clone()).map(|(a,b)| (a-b)*(a-b)).sum();
+    let tss:f64 = y.iter().map(|x| (x-yb)*(x-yb)).sum();
+    let rss_n_p = rss/(n-p);
+    let tss_n_1 = tss/(n-1.0);
+    let ar2 = 1.0-rss_n_p/tss_n_1;
+    //println!("ar2: {} rss_n_p {} tss_n_1 {} rss_n_p/tss_n_1 {} rss/tss {}", ar2, rss_n_p, tss_n_1, rss_n_p/tss_n_1, rss/tss);
 
-    1.0-((n-1.0)/(n-p))*(1.0-sum_yh_y_2/sum_y_yb_2)
+    // If R^2 is less than 0 then the mean is a better predictor than the model
+    if ar2 < 0.0 {
+        0.0
+    }else{
+        ar2
+    }
 }
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
