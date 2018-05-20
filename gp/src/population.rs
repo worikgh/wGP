@@ -33,50 +33,60 @@ pub struct Population<'b> {
     max_population:usize,
 }
 impl<'a> Population<'a> {
-    pub fn new(config:&Config, e:&'a mut Randomness) ->
-        Population<'a> {
-            // Load the data
-            let mut d_all = Data::new();
-            d_all.read_data(config.get_string("data_file").unwrap().as_str(),
-                            config.get_usize("training_percent").unwrap(), e);
-            Population{trees:Vec::new(), str_rep:HashMap::new(),
-                       input_names:d_all.names.clone(),
-                       maxid:0, e:e,
-                       bnd_rec:Recorder::new(config.get_string("birthsanddeaths_file").unwrap().as_str()),
-                       crossover_percent:config.get_usize("crossover_percent").unwrap(),
-                       d_all:d_all,
-                       max_population:config.get_usize("max_population").unwrap(),
-                       mutate_prob:config.get_usize("mutate_prob").unwrap(),
-                       copy_prob:config.get_usize("copy_prob").unwrap(),
-                       best_id:0, best_individual:"".to_string(),
-                       model_data_file:config.get_string("model_data_file").unwrap(),
-            }
-        }
+    pub fn new(config:&Config, e:&'a mut Randomness) -> Population<'a> {
+        // Load the data
+        let mut d_all = Data::new();
+        let df = config.get_string("data_file").unwrap() ;
+        let dp = config.get_usize("training_percent").unwrap();
+        d_all.read_data(df.as_str(),
+                        dp, e);
+        let ret = Population{trees:Vec::new(), str_rep:HashMap::new(),
+                             input_names:d_all.names.clone(),
+                             maxid:0, e:e,
+                             bnd_rec:Recorder::new(config.get_string("birthsanddeaths_file").unwrap().as_str()),
+                             crossover_percent:config.get_usize("crossover_percent").unwrap(),
+                             d_all:d_all,
+                             max_population:config.get_usize("max_population").unwrap(),
+                             mutate_prob:config.get_usize("mutate_prob").unwrap(),
+                             copy_prob:config.get_usize("copy_prob").unwrap(),
+                             best_id:0, best_individual:"".to_string(),
+                             model_data_file:config.get_string("model_data_file").unwrap(),
+        };
+        ret
+    }
+
+
+    fn best_idx(&self) -> usize {
+        0
+    }    
     pub fn best_id(&self) -> usize {
-        self.trees[0].0
+        self.trees[self.best_idx()].0
     }
     pub fn best_score(&self) -> f64 {
-        self.trees[0].2
+        self.trees[self.best_idx()].2
     }
     pub fn len(&self) -> usize {
         self.trees.len()
     }
     fn check_peek(&mut self, generation:usize){
-        let best_idx = 0;
-        let _best_id = self.trees[best_idx].0;
+        let _best_id = self.trees[self.best_idx()].0;
         if _best_id != self.best_id {
             self.best_id = _best_id;
-            let this_individual = self.trees[best_idx].1.to_string().clone();
+            let this_individual = self.get_tree_id(self.best_id).1.to_string().clone();
             if this_individual != self.best_individual {
+                let sc = score_individual(&self.trees[self.best_idx()].1, &self.d_all, false);
                 self.best_individual = this_individual.clone();
                 println!("G {} ID: {} Sc:{}\n{}\n",
-                         generation, self.trees[best_idx].0, self.trees[best_idx].2, self.trees[best_idx].1.to_pretty_string(0));
+                         generation,
+                         self.trees[self.best_idx()].0,
+                         sc,
+                         self.trees[self.best_idx()].1.to_pretty_string(0));
 
                 // Best tree
-                let ref n = self.trees[best_idx].1;
+                let ref n = self.trees[self.best_idx()].1;
 
                 // ID to lable it
-                let lable = self.trees[best_idx].0;
+                let lable = self.trees[self.best_idx()].0;
 
                 // Store its data
                 let simulation = simulate(&n, &self.d_all);
@@ -119,13 +129,9 @@ impl<'a> Population<'a> {
 
         // Call every generation
         println!("New generation: {} {}", generation, self.stats());
-        // Create a new population of trees
-        let mut new_trees:Vec<Tree> = Vec::new();
 
-        // Eliminate all trees with no valid score
-        //println!("Cull: Population: {}", self.len());
-        self.cull();
-        println!("Culled Population: {}", self.len());
+        // Create a new population of trees to replace the old one
+        let mut new_trees:Vec<Tree> = Vec::new();
 
         // To be ready for a new population reset self.str_rep which
         // checks for duplicates
@@ -151,14 +157,11 @@ impl<'a> Population<'a> {
                 self.trees.push((id, nb, sc));
                 self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}/{}: {}",
                                                 l, r, id, sc, nbstr));
-                //println!("Child {} l {} r {} {}", id, l, r, nbstr);
             }else{
                 //println!("Not unique l {} r {} new {}",l,r,st);
             }
             nc += 1;
         }
-        println!("After crossover");
-            
     
         // Do mutation.  Take mut_probab % of trees, mutate them, add
         // them to the new population
@@ -183,7 +186,7 @@ impl<'a> Population<'a> {
                 }                
             }
         }
-        println!("After mutation");
+
         // Copy the best trees.
         let mut cp = 0; // Number copied
         let mut cx = 0; // Index into self.trees
@@ -203,27 +206,21 @@ impl<'a> Population<'a> {
             }
             cx += 1;
         }    
-        println!("After copy");
 
         // New population is created
         self.trees = new_trees;
+        // Eliminate all trees with no valid score and sort them
+        self.cull_sort();
 
-        // Sort population by score, descending so the best are
-        // earliest.  Allows the worst individuals to be easilly
-        // pop'd off the end
-        self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
-        &self.trees[..].sort_by(|a,b| {
-            let a2 = a.2;
-            let b2 = b.2;
-            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
-        });
+        // println!("G {} <Sorted {} Best {} or {}",
+        //          generation,
+        //          self.trees[0].2>self.trees[self.trees.len()-1].2,
+        //          self.get_tree_id(self.best_id()).2,
+        //          self.trees[self.trees.len()-1].2);
 
-        println!("G {} <Sorted {} Best {} or {}", generation, self.trees[0].2<self.trees[self.trees.len()-1].2, self.get_tree_id(self.best_id()).2, self.trees[0].2);
-        // If the best individual has changed display it
         // Adjust population
         let mut n1 = 0; // Number of individuals deleted
         let mut n2 = 0; // Number of individuals added
-        println!("Population A: {}", self.len());
         if self.len() > self.max_population {
             while self.len() > self.max_population {
                 let _ = self.delete_worst();
@@ -237,13 +234,7 @@ impl<'a> Population<'a> {
         }
         if flag {
             // Sort again as we added new individuals
-            self.cull(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
-            &self.trees[..].sort_by(|a,b| {
-                let a2 = a.2;
-                let b2 = b.2;
-                b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
-            });
-
+            self.cull_sort(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
         }
         println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
         self.bnd_rec.buffer.flush().unwrap(); 
@@ -251,7 +242,7 @@ impl<'a> Population<'a> {
         self.check_peek(generation);
         
     }
-    pub fn cull(&mut self) {
+    pub fn cull_sort(&mut self) {
         // Remove individuals that we can no longer let live.  Eugenics!
         // Individuals with score NAN or 0
         let mut z:Vec<Tree> = Vec::new();
@@ -268,6 +259,14 @@ impl<'a> Population<'a> {
             
         }
         self.trees = z;
+        // Sort population by score, descending so the best are
+        // earliest.  Allows the worst individuals to be easilly
+        // pop'd off the end
+        &self.trees[..].sort_by(|a,b| {
+            let a2 = a.2;
+            let b2 = b.2;
+            b2.partial_cmp(&a2).unwrap_or(Ordering::Equal)
+        });
         // self.trees =
         //  self.trees.into_iter().filter(|x| {
         //     if !x.2.is_finite() {
@@ -298,8 +297,27 @@ impl<'a> Population<'a> {
         // inumerate all trees.  FIXME Use a iterator
         &self.trees[id]
     }
-
-    pub fn add_individual(&mut self) -> bool {
+    fn _initialise(&mut self){
+        loop {
+            // Random individual.  Returns true when a unique
+            // individual is created.
+            while !self.add_individual() {} 
+            if self.len() == self.max_population {
+                break;
+            }
+        }
+    }        
+    pub fn initialise(&mut self){
+        loop {
+            self._initialise();
+            self.cull_sort();
+            println!("Population initial size : {}", self.len());
+            if self.len() > 0 {
+                break;
+            }
+        }
+    }
+    fn add_individual(&mut self) -> bool {
         // Add a individuall.  If the individual is already in the
         // population do not add it and return false
         let n = Box::new(Node::new(self.e, &self.d_all.names, 0));
@@ -310,7 +328,7 @@ impl<'a> Population<'a> {
             // This node is unique
             self.maxid += 1;
             self.str_rep.insert(st, true);
-            let sc = score_individual(&n, &self.d_all, false);
+            let sc = score_individual(&n, &self.d_all, true);
             {
                 self.bnd_rec.write_line(&format!("Create {}/{} {}", self.maxid, sc, n.to_string()));
                 if sc == 1.0 {
