@@ -5,10 +5,11 @@ extern crate statistical;
 mod config;
 mod entropy;
 mod population;
+mod inputs;
+use inputs::Inputs;
 use config::Config;
 use entropy::Randomness;
 use population::Population;
-use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs::File;
@@ -27,23 +28,6 @@ enum TerminalType {
     Inputf64(String),
 }
 
-// Passed to Node::evaluate.  Matches custom terminals in TerminalType
-struct Inputs {
-    dataf:HashMap<String, f64>,
-}
-impl Inputs {
-    fn new() -> Inputs {
-        Inputs{
-            dataf:HashMap::new(),
-        }
-    }
-    fn  insert(&mut self, k:&str, v:f64) {
-        self.dataf.insert(k.to_string(), v);
-    }
-    fn get(&self, k:&str) -> Option<&f64> {
-        self.dataf.get(k)
-    }
-}
 // Get the data from the terminal
 fn gt(tt:&TerminalType) -> String {
     match tt {
@@ -51,6 +35,7 @@ fn gt(tt:&TerminalType) -> String {
         &TerminalType::Inputf64(ref s) => format!("{} ",s),
     }
 }
+
 impl fmt::Display for TerminalType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let n = gt(self);
@@ -124,7 +109,7 @@ impl Node {
                 Some(NodeBox::new(Node::new_from_iter(iter))),
             _ => None,
         };
-                
+        
         Node{o:operator, l:l, r:r, d:d}
     }    // Build a random tree
     /* Paramaters:
@@ -773,14 +758,12 @@ impl Data {
     }
 }
 
-
-
 // Calculate the score of a indvidual against the data Param n: The
 // individual Param d: The data to use.  'use_testing' is true if the
 // individual is to be scored on the testing set. The returned value
 // is Adjusted R-squared.  This is a quantity to maximise.
 fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
-
+    
     // Calculate adjusted R-squared
     // ----------------------------
     // n: The number of data points
@@ -833,7 +816,7 @@ fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
     let rss_n_p = rss/(n-p);
     let tss_n_1 = tss/(n-1.0);
     let ar2 = 1.0-rss_n_p/tss_n_1;
-    //println!("ar2: {} rss_n_p {} tss_n_1 {} rss_n_p/tss_n_1 {} rss/tss {}", ar2, rss_n_p, tss_n_1, rss_n_p/tss_n_1, rss/tss);
+    //println!("ar2: {} rss_n_p {} tss_n_1 {} rss_n_p/tss_n_1 {} rss/tss {} use_testing: {} node {}", ar2, rss_n_p, tss_n_1, rss_n_p/tss_n_1, rss/tss, use_testing, node.to_string());
 
     // If R^2 is less than 0 then the mean is a better predictor than the model
     if ar2 < 0.0 {
@@ -1113,7 +1096,6 @@ fn main() {
     // Load configuration data
     let data_file = config.get_string("data_file").unwrap();
     let generations_file = config.get_string("generations_file").unwrap();
-    let initial_population =  config.get_usize("initial_population").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
     let num_generations = config.get_usize("num_generations").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
@@ -1160,15 +1142,9 @@ fn main() {
         // Create a population. 
         println!("Population start");
         let mut population = Population::new(&config, &mut e);
-        loop {
-            // Random individual.  Returns true when a unique
-            // individual is created.
-            while !population.add_individual() {} 
-            if population.len() == initial_population {
-                break;
-            }
-        }
-        println!("Created initial population");
+        population.initialise();
+        
+        println!("Created initial population {}", population.len());
 
         for generation in 0..num_generations {
             // Main loop
