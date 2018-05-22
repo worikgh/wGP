@@ -71,8 +71,6 @@ pub struct Node {
     d:Option<NodeBox>, // The decision leg for if
 }
 
-// The source of entropy that is passed to trees to create themselves.
-// With.  FIXME Why not pass around a StdRng?
 impl Node {
     fn new_from_string(s:&str) -> Node {
         let mut iter = s.split_whitespace();
@@ -918,12 +916,12 @@ dev.off()
 png(filename=\"IDGeneration.png\",
     width=210, height=297, units=\"mm\", res=600)
 ## Read the first four columns from the file as numeric
-q <- scan(\"GENERATIONS_FILE\", what = list(1,1,1,1,1), flush = TRUE)
-data <- cbind(c(0, diff(q[[1]])),q[[2]], q[[3]], q[[4]], q[[5]])
+q <- scan(\"GENERATIONS_FILE\", what = list(1,1,1,1,1,1), flush = TRUE, skip=1)
+data <- cbind(c(0, diff(q[[1]])),q[[2]], q[[3]], q[[4]], q[[5]], q[[6]])
 ## First row has invalid time data (no diff at time 0) so get rid of it?
 ## data <- data[-1,] Na!
 
-colnames(data) <- c(\"Sec\", \"Gen\", \"ID\", \"Eval\", \"Pop\")
+colnames(data) <- c('Sec', 'Gen', 'Best Gen', 'Best Spec', 'Eval', 'Pop')
 
 gen <- data[,'Gen']
 pop <- data[,'Pop']
@@ -1082,11 +1080,14 @@ fn main() {
         
         println!("Created initial population {}", population.len());
 
+        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
         for generation in 0..num_generations {
             // Main loop
             
             population.new_generation(generation);
-            let s = format!("{} {} (G {} S {}) {} {}",
+            let s = format!("{} {} {} {} {} {}",
                             generation,
                             population.best_id(),
                             population.best_score().general,
