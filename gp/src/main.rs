@@ -1,24 +1,28 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate rand;
 extern crate statistical;
 
 //use statistical::mean;
 mod config;
-mod entropy;
-mod population;
 mod inputs;
-use inputs::Inputs;
+mod population;
+mod score;
+mod rng;
 use config::Config;
-use entropy::Randomness;
+use inputs::Inputs;
 use population::Population;
+use score::score_individual;
 use std::env;
 use std::fmt;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::prelude::*;
 use std::path::Path;
 use std::time::SystemTime;
-use std::io::BufWriter;
+
 
 // The type of data that can be a terminal
 #[derive(Debug)]
@@ -117,7 +121,7 @@ impl Node {
      * names - The names of the input fields
      * level - The distance from the root node for this node
      */
-    fn new(e:&mut Randomness, names:&Vec<String>, level:usize) -> Node {
+    fn new(names:&Vec<String>, level:usize) -> Node {
         let l = level+1;
 
         // FIXME Make this max levela configurable constant
@@ -125,7 +129,7 @@ impl Node {
         let a = if level > maxlevel { 
             0
         }else{
-            e.gen_range(0, 18)
+            rng::gen_range(0, 18)
         };
 
         macro_rules! NewNode {
@@ -137,20 +141,20 @@ impl Node {
                                        d: None,
                     };
                     if $c > 0 {
-                        ret.l = Some(Box::new(Node::new(e , names, l)));
+                        ret.l = Some(Box::new(Node::new(names, l)));
                     }
                     if $c > 1 {
-                        ret.r = Some(Box::new(Node::new(e , names, l)));
+                        ret.r = Some(Box::new(Node::new(names, l)));
                     }
                     if $c > 2 {
-                        ret.d = Some(Box::new(Node::new(e , names, l)));
+                        ret.d = Some(Box::new(Node::new(names, l)));
                     }
                     ret
                 }
             }
         };
         match a {
-            0 => Node{o:Operator::Terminal(TerminalType::Float(e.gen())), l:None, r:None, d:None},
+            0 => Node{o:Operator::Terminal(TerminalType::Float(rng::random())), l:None, r:None, d:None},
             1 => NewNode!(Log,1),
             2 => NewNode!(Invert,1),
             3 => NewNode!(Negate,1),
@@ -162,7 +166,7 @@ impl Node {
             _ => {
                 // Input node
                 let n = names.len() - 1; // -1 as last name/column is solution
-                let b = e.gen_range(0, n);
+                let b = rng::gen_range(0, n);
                 let s = names[b].clone();
                 Node{o:Operator::Terminal(TerminalType::Inputf64(s)), l:None, r:None, d:None}
             }
@@ -184,12 +188,12 @@ impl Node {
         };
         dc + lc + rc + 1
     }
-    fn random_node(&self, e:& mut Randomness) -> NodeBox {
+    fn random_node(&self) -> NodeBox {
         // Choose a subtree (node) of this tree (node).  FIXME there
         // is a lot of optimisation to be done.  Paticularly if each
         // node had the number of nodes that are child nodes of this...
         let c = self.count_nodes();
-        let mut n = e.gen_range(0, c);
+        let mut n = rng::gen_range(0, c);
         let mut node:& Node = self;
         loop {
             // println!("Node: {} n {}", self.to_string(), n);
@@ -535,8 +539,7 @@ mod tests {
 
         // The source of entropy.  This is done this way so the same seed
         // can be used to produce repeatable results
-        // let mut e = Randomness::new(&[11,2,3,422, 195]);
-        let mut e = Randomness::new(&[11,2,3,4]);
+        let mut e = rng::get();
 
         // Load the data
         let mut d_all:Data = Data::new();
@@ -699,10 +702,10 @@ impl Data {
     fn add_name(& mut self, k:&str) {
         self.names.push(k.to_string())
     }
-    fn partition(&mut self, training_percent:usize, e:&mut Randomness){
+    fn partition(&mut self, training_percent:usize){
         // Partition the data into training and testing sets
         for i in 0..self.rows.len() {
-            let z = e.gen_range(0, 100);
+            let z = rng::gen_range(0, 100);
             if z < training_percent {
                 self.training_i.push(i);
             }else{
@@ -716,7 +719,7 @@ impl Data {
     }
     // Read in the data from a file
     fn read_data(&mut self, f_name:&str,
-                 training_percent:usize, e:&mut Randomness) {
+                 training_percent:usize) {
 
         // Must be in file f_name.  First row is header
         self.reset();
@@ -754,77 +757,10 @@ impl Data {
             self.add_row(d);
             
         }
-        self.partition(training_percent, e);
+        self.partition(training_percent);
     }
 }
 
-// Calculate the score of a indvidual against the data Param n: The
-// individual Param d: The data to use.  'use_testing' is true if the
-// individual is to be scored on the testing set. The returned value
-// is Adjusted R-squared.  This is a quantity to maximise.
-fn score_individual(node:&NodeBox, d:&Data, use_testing:bool) -> f64 {
-    
-    // Calculate adjusted R-squared
-    // ----------------------------
-    // n: The number of data points
-    // p: The number of parameters (input nodes)
-    // yb: Mean response (y-bar)
-    // yh: Estimated response (y-hat)
-    // y: Actual response
-    // ar2: Adjusted R-squared
-    // ar2 = 1 - ((n-1)/(n-p))(1-(sum((yh-y)^2)/sum((y-yb)^2)))
-    // ar2 = 1-(RSS/(n-p))/(TSS/(n-1)) RSS = sum((yh-y)^2) TSS = sum((y-yb)^2)
-    // Due to "Linear Models with R" bu Julian J. Faraway 2005
-
-    
-    let mut inputs = Inputs::new();
-
-    let index:&Vec<usize>;
-    if use_testing {
-        index = &d.testing_i;
-    }else{
-        index = &d.training_i;
-    }
-
-    let mut yb:f64;;
-    let mut yh:Vec<f64> = Vec::new();
-    let mut y:Vec<f64> = Vec::new();
-    let n = index.len() as f64;
-    // d.names includes parameters and response, so minus 1;
-    let p = (d.names.len() - 1) as f64; 
-    
-    for i in index {
-        let ref r = d.ith_row(*i);
-        for j in 0..d.names.len() {
-            let v:f64 = r[j];
-            let h = d.names[j].clone();
-            inputs.insert(h.as_str(), v);
-        }
-        let e = node.evaluate(&inputs).unwrap();
-        // Get the target
-        let t = inputs.get(d.names.last().unwrap()).unwrap();
-        y.push(*t);
-        yh.push(e);
-    }
-
-
-    // ar2 = 1-(RSS/(n-p))/(TSS/(n-1)) RSS = sum((yh-y)^2) TSS = sum((y-yb)^2)
-    yb = y.iter().sum();
-    yb /= y.len() as f64;
-    let rss:f64 = yh.iter().zip(y.clone()).map(|(a,b)| (a-b)*(a-b)).sum();
-    let tss:f64 = y.iter().map(|x| (x-yb)*(x-yb)).sum();
-    let rss_n_p = rss/(n-p);
-    let tss_n_1 = tss/(n-1.0);
-    let ar2 = 1.0-rss_n_p/tss_n_1;
-    //println!("ar2: {} rss_n_p {} tss_n_1 {} rss_n_p/tss_n_1 {} rss/tss {} use_testing: {} node {}", ar2, rss_n_p, tss_n_1, rss_n_p/tss_n_1, rss/tss, use_testing, node.to_string());
-
-    // If R^2 is less than 0 then the mean is a better predictor than the model
-    if ar2 < 0.0 {
-        0.0
-    }else{
-        ar2
-    }
-}
 
 // Do a simulation to evaluate a model.  Returns a vector of pairs.
 // The first element is true value the second is simulation result
@@ -1078,7 +1014,6 @@ impl Recorder {
     }
 }
 
-
 fn main() {
     println!("Start");
 
@@ -1102,7 +1037,7 @@ fn main() {
     let plot_xlab = config.get_string("plot_xlab").unwrap();
     let r_script_file = config.get_string("r_script_file").unwrap();
     let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
-    let seed:Vec<usize> = seed.split_whitespace().map(|x| x.parse::<usize>().unwrap()).collect();
+    let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
     let sim_id = config.get_string("id").unwrap();
     let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     
@@ -1121,9 +1056,9 @@ fn main() {
 
     // The source of entropy.  This is done this way so the same seed
     // can be used to produce repeatable results let mut e =
-    // Randomness::new(&[11,2,3,422, 195]); FIXME This is a sitting
-    // duck for usiing traits.
-    let mut e = Randomness::new(&seed);
+
+    use rng;
+    rng::reseed(seed.as_slice());
 
     // Two modes of operation: One is eevaluating a single model (the
     // model is passed using the 'eval' configuration keyword) or run
@@ -1131,17 +1066,18 @@ fn main() {
     if let Some(ns) = config.get_string("eval") {
         // Load the data
         let mut d_all = Data::new();
-        d_all.read_data(data_file.as_str(), training_percent, &mut e);
+        d_all.read_data(data_file.as_str(), training_percent);
         let n = NodeBox::new(Node::new_from_string(ns.as_str()));
         let s = (*n).to_string();
-        println!("{} {}", s, score_individual(&n, &d_all, true));
+        let sc = score_individual(&n, &d_all, true);
+        println!("{} General: {} Special: {}", s, sc.general, sc.special);;
         
     }else{
         // Running a simulation
         
         // Create a population. 
         println!("Population start");
-        let mut population = Population::new(&config, &mut e);
+        let mut population = Population::new(&config);
         population.initialise();
         
         println!("Created initial population {}", population.len());
@@ -1150,8 +1086,11 @@ fn main() {
             // Main loop
             
             population.new_generation(generation);
-            let s = format!("{} {} {} {} {}", generation,
-                            population.best_id(), population.best_score(),
+            let s = format!("{} {} (G {} S {}) {} {}",
+                            generation,
+                            population.best_id(),
+                            population.best_score().general,
+                            population.best_score().special,
                             population.len(),
                             population.get_tree_id(population.best_id()).1.to_string());
             generation_recorder.write_line(&s[..]);
