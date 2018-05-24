@@ -37,9 +37,20 @@ pub struct Score {
 
     // The mean clasification score
     pub general:f64,
+
+    // // ID of the tree this score is for
+    // id:usize,
+
+    // // Reset to false on construction and set to true when scores
+    // // calculated
+    // initialised:bool,
 }
 
 impl Score {
+    // pub fn new(id:usize) -> Score {
+    //     Score {id:id, special:0.0, general:0.0, initialise:false}
+    // }
+    
     pub fn evaluate(&self) -> f64 {
         // Project the two dimensional score onto one dimension for
         // sorting and selection
@@ -50,6 +61,7 @@ impl Score {
         // specificity or generality
         (self.general * self.general + self.special * self.special).sqrt()
     }
+    
     pub fn partial_cmp(&self, other:&Score) -> Option<Ordering> {
         // For ordering array of scores
         self.evaluate().partial_cmp(&other.evaluate())
@@ -60,15 +72,16 @@ impl Score {
     pub fn is_finite(&self) -> bool {
         self.special.is_finite() && self.general.is_finite()
     }
+
+    // Calculate the score of a indvidual against the data Param n: The
+    // individual Param d: The data to use.  'use_testing' is true if the
+    // individual is to be scored on the testing set.
+
 }
-
-// Calculate the score of a indvidual against the data Param n: The
-// individual Param d: The data to use.  'use_testing' is true if the
-// individual is to be scored on the testing set.
-
-pub fn score_individual(node:&NodeBox,
-                        d:&Data,
-                        use_testing:bool) -> Score {
+pub fn score_individual(
+                            node:&NodeBox,
+                            d:&Data,
+                            use_testing:bool) -> Score {
 
     // Get the data to do the evaluation on
     let mut inputs = Inputs::new();

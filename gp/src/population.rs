@@ -1,18 +1,17 @@
 use config::Config;
+use node::Node;
+use node::NodeBox;
+use rng;
+use score::Score;
+use std::cmp::Ordering;
 use std::collections::HashMap;    
+use std::io::Write;
 use std;
 use super::Data;
-use super::NodeBox;
 use super::Recorder;
-use rng;
-
-use super::Node;
+use super::add_simulation;
 use super::score_individual;
 use super::simulate;
-use super::add_simulation;
-use std::cmp::Ordering;
-use std::io::Write;
-use score::Score;
 
 // Define a individual.  Consists of a node, a id, and a score.  Called
 // a Tree because it is not a sub-tree...
@@ -32,6 +31,10 @@ pub struct Population {
     model_data_file:String,
     input_names:Vec<String>,
     max_population:usize,
+
+    // weights for processing fitness.  Sum to 1.0
+    fitness_weight_special:f64,
+    fitness_weight_general:f64,
 }
 impl Population {
     pub fn new(config:&Config) -> Population {
@@ -40,6 +43,12 @@ impl Population {
         let df = config.get_string("data_file").unwrap() ;
         let dp = config.get_usize("training_percent").unwrap();
         d_all.read_data(df.as_str(), dp);
+        let fitness_weight_special = config.get_f64("fitness_weight_special").unwrap();
+        let fitness_weight_general = config.get_f64("fitness_weight_general").unwrap();
+        if fitness_weight_special + fitness_weight_general != 1.0 {
+            // FIXME Testing equality for floats.  Bad bad bad
+            panic!("fitness_weight_special + fitness_weight_general == {}", fitness_weight_special + fitness_weight_general);
+        }
         let ret = Population{trees:Vec::new(), str_rep:HashMap::new(),
                              input_names:d_all.names.clone(),
                              maxid:0,
@@ -51,6 +60,9 @@ impl Population {
                              copy_prob:config.get_usize("copy_prob").unwrap(),
                              best_id:0, best_individual:"".to_string(),
                              model_data_file:config.get_string("model_data_file").unwrap(),
+                             fitness_weight_special:config.get_f64("fitness_weight_special").unwrap(),
+                             fitness_weight_general:config.get_f64("fitness_weight_general").unwrap(),
+                             
         };
         ret
     }

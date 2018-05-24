@@ -2,11 +2,12 @@ use rand::{ChaChaRng, Rand, Rng, SeedableRng};
 use std::sync::{self, Mutex};
 use rand::distributions::range::SampleRange;
 lazy_static! {
-    pub static ref RNG: Mutex<ChaChaRng> = {
+    static ref RNG: Mutex<ChaChaRng> = {
         let rng = ::rand::random();
         Mutex::new(rng)
     };
 }
+
 
 // Convenience method
 pub fn reseed(seed: &[u32]) {

@@ -26,19 +26,26 @@ impl Config {
         }
         Config{data:config_hm}
     }
-    pub fn get_usize(&self, k:&str) -> Option<usize> {
-        let v = match self.data.get(k) {
+    fn _get(&self, k:&str) -> &str {
+        match self.data.get(k) {
             Some(v) => v,
             _ => panic!("Failed config. {} as usize", k),
-        };
-        let ret = match v.parse::<usize>() {
+        }
+    }        
+    pub fn get_f64(&self, k:&str) -> Option<f64> {
+        match self._get(k).parse::<f64>() {
+            Ok(v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn get_usize(&self, k:&str) -> Option<usize> {
+        match self._get(k).parse::<usize>() {
             Ok(v) => Some(v),
             _ => {
                 None
             },
             
-        };
-        ret
+        }
     }
     pub fn get_string(&self, k:&str) -> Option<String> {
         match self.data.get(k) {
