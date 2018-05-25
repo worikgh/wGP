@@ -269,7 +269,30 @@ impl Population {
         self.bnd_rec.buffer.flush().unwrap(); 
 
         self.check_peek(generation);
-        
+
+        // Write out a record of all scores to do statistical analysis to help with debugging
+        let mut scores:Vec<(f64,f64)> = Vec::new();
+        for i in 0..self.trees.len() {
+            let s = self.trees[i].2.special;
+            scores.push((s, self.trees[i].2.general))
+        }
+
+        let mut r = Recorder::new("fitness.csv");
+        let mut l1 = "".to_string();
+        let mut l2 = "".to_string();
+        l1 += &generation.to_string();
+        l2 += &generation.to_string();
+        l1 += ",G,";
+        l2 += ",S,";
+        for i in scores {
+            l1 += &i.1.to_string();
+            l1 += ",";
+            l2 += &i.0.to_string();
+            l2 += ",";
+        }
+        r.write_line(&l1);
+        r.write_line(&l2);
+        println!("Wrote fitness");
     }
     pub fn cull_sort(&mut self) {
         // Remove individuals that we can no longer let live.  Eugenics!
@@ -351,7 +374,7 @@ impl Population {
         // selection:
         // https://en.wikipedia.org/wiki/Fitness_proportionate_selection
 
-        let total_score:f64 = self.trees.iter().fold(0.0, | a, ref b| if b.2.is_finite() {a+1.0/b.2.evaluate()}else{0.0});
+        let total_score:f64 = self.trees.iter().fold(0.0, | a, ref b| if b.2.is_finite() {a+b.2.evaluate()}else{0.0});
 
         if total_score == 0.0 {
             self.trees[rng::gen_range(0, self.trees.len() - 1)].0
@@ -364,9 +387,17 @@ impl Population {
                     ret = Some(i.0);
                     break;
                 }
-                acc += 1.0/i.2.evaluate();
+                acc += i.2.evaluate();
             }
-            ret.unwrap()
+            match ret {
+                Some(r) => r,
+                None => {
+                    // This should not happen
+                    println!("Could not select individual acc: {} sel: {} total_score: {}",
+                             acc, sel, total_score);
+                    rng::gen_range(0, self.trees.len()-1)
+                },
+            }
         }
     }    
     fn add_individual(&mut self) -> bool {
