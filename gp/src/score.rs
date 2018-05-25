@@ -2,6 +2,7 @@ use super::NodeBox;
 use super::Data;
 use inputs::Inputs;
 use std::cmp::Ordering;
+use std::collections::HashMap;    
 use std;
 // Scoring a individual is key to evolving a good population of
 // individuals.
@@ -32,11 +33,16 @@ use std;
 
 #[derive(Clone, Copy)]
 pub struct Score {
-    // The best classification score of any single object
+    // Fitness calculated hen classifying to self.class.unwrap()
     pub special:f64,
+
+    //  The class this score is specialised for. Obtained from the
+    //  objective data
+    pub class:Option<i64>,
 
     // The mean clasification score
     pub general:f64,
+
 
     // // ID of the tree this score is for
     // id:usize,
@@ -66,13 +72,13 @@ impl Score {
         // For ordering array of scores
         self.evaluate().partial_cmp(&other.evaluate())
     }
-    pub fn copy(&self) -> Score {
-        Score{general:self.general, special:self.special}
-    }
     pub fn is_finite(&self) -> bool {
         self.special.is_finite() && self.general.is_finite()
     }
 
+    pub fn copy(&self) -> Score {
+        Score{general:self.general, special:self.special, class:self.class}
+    }
     // Calculate the score of a indvidual against the data Param n: The
     // individual Param d: The data to use.  'use_testing' is true if the
     // individual is to be scored on the testing set.
@@ -92,6 +98,11 @@ pub fn score_individual(
         index = &d.training_i;
     }
 
+    // Keep a record of hat objective cases are in the data to help
+    // decide on a value for the special fitness.  We cannot hash f64
+    // so we must convert it to the nearest i64 floorwards
+    let mut classes:HashMap<i64, bool> = HashMap::new();
+    
     // To calculate the mean count examples
     let n = index.len() as f64;
 
@@ -99,7 +110,8 @@ pub fn score_individual(
     // to calculate best and mean estimate
     let mut y_d:Vec<f64> = Vec::new(); // Distances
     let mut s_i = std::f64::MAX; // The minimum score
-    
+
+    let mut class:Option<i64> = None; // The class this is specialised for
     for i in index {
         // Examine each example
         let ref r = d.ith_row(*i);
@@ -108,22 +120,74 @@ pub fn score_individual(
             let h = d.names[j].clone();
             inputs.insert(h.as_str(), v);
         }
-
+        let _class = r[d.names.len()-1].floor() as i64;
+        classes.entry(_class).or_insert(true);
+        
         let e = node.evaluate(&inputs).unwrap();
         // Get the target
         let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
         let s = (t-e).abs();
-        if s < s_i {
+        if s.is_finite() && s < s_i {
             s_i = s;
+
+            // Store the class this is best for
+            class = Some(_class);
+        }else{
+            //println!("s {} s_i {}", s, s_i);
         }
         y_d.push(s);
     }
 
-    // Calculate the two scores
-
-
-    // The mean distance
+    // Calculate the general score
     let s_m:f64 = y_d.iter().fold(0.0, |mut sum, val| {sum += val; sum})/n;
-    Score{special:s_i, general:s_m}
+
+    // Recalculate s_i the special score.  For  the selected class.
+
+    // Given the number of classes = N
+    let n = classes.len();
+    
+    // Start a accumulator: acc at 0.0;
+    let mut acc = 0.0;
+
+    // For each data row if the objective is the class specialising
+    // this score for add 1/distance to acc.  Else subtract
+    // 1/(N*distance) from the score.  At the end if the score is less
+    // than zero set it to zero
+    match class {
+        Some(c) => {
+            let this_class = c;
+            for i in index {
+                // Examine each example
+                let ref r = d.ith_row(*i);
+                for j in 0..d.names.len() {
+                    let v:f64 = r[j];
+                    let h = d.names[j].clone();
+                    inputs.insert(h.as_str(), v);
+                }
+                let e = node.evaluate(&inputs).unwrap();
+                // Get the target
+                let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
+                let _class = t.floor() as i64;
+                let s = (t-e).abs();
+
+                if this_class == class.unwrap() {
+                    acc += 1.0/(1.0+s);
+                }else{
+                    acc -= 1.0/(1.0+(n as f64)*s);
+                }
+            }
+            if acc < 0.0 {
+                acc = 0.0;
+            }
+            //println!("Scored");
+        },
+        None => (),
+    };
+    Score{special:acc,
+          // Invert general score, which is mean distance) to make
+          // bigger better
+          general:1.0/s_m,
+          class:class
+    }
 }
 

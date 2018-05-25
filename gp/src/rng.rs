@@ -26,3 +26,26 @@ pub fn get<'a>() -> sync::MutexGuard<'a, ChaChaRng>{
     RNG.lock().expect("Attempted to borrow the Rng multiple times!")
 }
 
+
+// #![feature(thread_local)]
+
+// extern crate rand;
+// extern crate xorshift;
+
+// use rand::distributions::normal::StandardNormal;
+// use xorshift::{Rand,Rng,SeedableRng,SplitMix64,Xoroshiro128};
+
+// #[thread_local]
+// static mut RNG:Option<Xoroshiro128> = None;
+
+// pub fn seed(x:u64) {
+//     let mut seeding_rng:SplitMix64 = SeedableRng::from_seed(x);
+//     unsafe { RNG = Some(Rand::rand(&mut seeding_rng)); }
+// }
+
+// pub fn rnorm() -> f64 {
+//     unsafe {
+//         let StandardNormal(x) = RNG.as_mut().unwrap().gen::<StandardNormal>();
+//         x
+//     }
+// }

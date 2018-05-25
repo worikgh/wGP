@@ -186,8 +186,8 @@ pub struct Data {
     names:Vec<String>, 
 
     // Each row is a hash keyed by names FIXME Inefficient(?) use of memory
-    rows:Vec<Vec<f64>>, 
-    
+    rows:Vec<Vec<f64>>,
+
     // Indexes into rows for training data
     training_i:Vec<usize>,
 
