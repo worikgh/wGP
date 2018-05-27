@@ -1,5 +1,6 @@
 use super::NodeBox;
 use super::Data;
+use population::Class;
 use inputs::Inputs;
 use std::cmp::Ordering;
 use std::collections::HashMap;    
@@ -38,7 +39,7 @@ pub struct Score {
 
     //  The class this score is specialised for. Obtained from the
     //  objective data
-    pub class:Option<i64>,
+    pub class:Option<Class>,
 
     // The mean clasification score
     pub general:f64,
@@ -101,7 +102,7 @@ pub fn score_individual(
     // Keep a record of hat objective cases are in the data to help
     // decide on a value for the special fitness.  We cannot hash f64
     // so we must convert it to the nearest i64 floorwards
-    let mut classes:HashMap<i64, bool> = HashMap::new();
+    let mut classes:HashMap<Class, bool> = HashMap::new();
     
     // To calculate the mean count examples
     let n = index.len() as f64;
@@ -111,7 +112,7 @@ pub fn score_individual(
     let mut y_d:Vec<f64> = Vec::new(); // Distances
     let mut s_i = std::f64::MAX; // The minimum score
 
-    let mut class:Option<i64> = None; // The class this is specialised for
+    let mut class:Option<Class> = None; // The class this is specialised for
     for i in index {
         // Examine each example
         let ref r = d.ith_row(*i);
@@ -120,7 +121,7 @@ pub fn score_individual(
             let h = d.names[j].clone();
             inputs.insert(h.as_str(), v);
         }
-        let _class = r[d.names.len()-1].floor() as i64;
+        let _class = r[d.names.len()-1].floor() as Class;
         classes.entry(_class).or_insert(true);
         
         let e = node.evaluate(&inputs).unwrap();
@@ -167,7 +168,7 @@ pub fn score_individual(
                 let e = node.evaluate(&inputs).unwrap();
                 // Get the target
                 let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
-                let _class = t.floor() as i64;
+                let _class = t.floor() as Class;
                 let s = (t-e).abs();
 
                 if this_class == class.unwrap() {
@@ -179,7 +180,6 @@ pub fn score_individual(
             if acc < 0.0 {
                 acc = 0.0;
             }
-            //println!("Scored");
         },
         None => (),
     };

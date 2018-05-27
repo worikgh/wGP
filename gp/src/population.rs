@@ -17,6 +17,8 @@ use super::simulate;
 // a Tree because it is not a sub-tree...
 type Tree = (usize, NodeBox, Score); 
 
+pub type Class = i32;
+
 pub struct Population {
     trees:Vec<Tree>,
     str_rep:HashMap<String, bool>,
@@ -36,6 +38,7 @@ pub struct Population {
     fitness_weight_special:f64,
     fitness_weight_general:f64,
 }
+
 impl Population {
     pub fn new(config:&Config) -> Population {
         // Load the data
@@ -154,6 +157,18 @@ impl Population {
                 maxg, maxs,
                 nng, nns)
     }
+    
+    fn get_trees_of_class(&self, class:Class) -> Vec<&Tree> {
+        self.trees.iter().filter(|t| t.2.class == Some(class)).collect()
+    }
+        
+    fn get_classes(&self) -> Vec<Class>{
+        // Return all known class lables
+        let mut idx:HashMap<Class, bool> = HashMap::new();
+        self.trees.iter().map(|x| idx.insert(x.2.class.unwrap(), true));
+        idx.keys().map(|&x| x).collect()
+    }
+
     pub fn new_generation(&mut self, generation:usize){
 
         // Call every generation
@@ -294,6 +309,8 @@ impl Population {
         r.write_line(&l2);
         println!("Wrote fitness");
     }
+
+
     pub fn cull_sort(&mut self) {
         // Remove individuals that we can no longer let live.  Eugenics!
         // Individuals with score NAN or 0
