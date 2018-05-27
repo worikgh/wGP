@@ -158,17 +158,6 @@ impl Population {
                 nng, nns)
     }
     
-    fn get_trees_of_class(&self, class:Class) -> Vec<&Tree> {
-        self.trees.iter().filter(|t| t.2.class == Some(class)).collect()
-    }
-        
-    fn get_classes(&self) -> Vec<Class>{
-        // Return all known class lables
-        let mut idx:HashMap<Class, bool> = HashMap::new();
-        self.trees.iter().map(|x| idx.insert(x.2.class.unwrap(), true));
-        idx.keys().map(|&x| x).collect()
-    }
-
     pub fn new_generation(&mut self, generation:usize){
 
         // Call every generation
@@ -366,6 +355,19 @@ impl Population {
         // inumerate all trees.  FIXME Use a iterator
         &self.trees[id]
     }
+
+    fn get_trees_of_class(&self, class:Class) -> Vec<&Tree> {
+        self.trees.iter().filter(|t| t.2.class == Some(class)).collect()
+    }
+        
+    fn get_classes(&self) -> Vec<Class>{
+        // Return all known class lables
+        let mut idx:HashMap<Class, bool> = HashMap::new();
+        self.trees.iter().map(|x| idx.insert(x.2.class.unwrap(), true));
+        idx.keys().map(|&x| x).collect()
+    }
+
+    
     fn _initialise(&mut self){
         loop {
             // Random individual.  Returns true when a unique
