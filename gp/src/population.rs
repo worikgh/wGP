@@ -177,7 +177,10 @@ impl Population {
         
         let mut nc = 0;
         while nc < ncross  {
+
+            // 
             let (nb, l, r) = self.do_crossover();
+
             let st = (*nb).to_string();
             self.str_rep.entry(st.clone()).or_insert(false);
             if !self.str_rep.get(&st).unwrap() {
@@ -388,7 +391,9 @@ impl Population {
             }
         }
     }
+    
     fn roulette_selection(&mut self) -> usize {
+
         // Return the id of a individual selected using roulette wheel
         // selection:
         // https://en.wikipedia.org/wiki/Fitness_proportionate_selection
@@ -414,7 +419,7 @@ impl Population {
                     // This should not happen
                     println!("Could not select individual acc: {} sel: {} total_score: {}",
                              acc, sel, total_score);
-                    rng::gen_range(0, self.trees.len()-1)
+                    self.trees[rng::gen_range(0, self.trees.len())].0
                 },
             }
         }
@@ -461,7 +466,9 @@ impl Population {
         // The higher the score the node got last generation the
         // higher the probability it will be selected to be
         // participate in crossover
-        // Choose two trees to cross over
+
+        // Choose two trees to cross over.  FIXME implement other
+        // selection methods
         let i0 = self.roulette_selection();
         let i1 = self.roulette_selection();
         
@@ -521,27 +528,30 @@ impl Population {
                     ret.d = Some(NodeBox::new(child));
                 }else{
                     panic!("selector {} is invalid lnc {} rnc {} dnc {} nc {}",
-                             selector, lnc, rnc, dnc, nc);
+                           selector, lnc, rnc, dnc, nc);
                 }
                 ret
             }
         }
 
     }
+
+    
     fn crossover(&mut self, lidx:usize, ridx:usize) -> NodeBox {
 
-        
+        // FIXME Use references to nodes (and lifetimes?) insted of
+        // indexes.  Save on lookups
+
+        // Given the indexes of the a left and a right tree combine
+        // the two trees to make a third individual
         let p:NodeBox;// Parent
         let c:NodeBox;// Child
         if rng::random::<f64>() > 0.0 {
-            let n = &self.get_tree_id(lidx).1;
-            {
-                p = n.random_node();
-            }
-            c = self.get_tree_id(ridx).1.random_node();
+            p = self.get_tree_id(lidx).1.random_node();
+            c = self.get_tree_id(ridx).1.random_node()
         }else{
             c = self.get_tree_id(lidx).1.random_node();
-            p = self.get_tree_id(ridx).1.random_node();
+            p = self.get_tree_id(ridx).1.random_node()
         }
         // Make the new tree by copying c
         let c = c.copy();
@@ -550,19 +560,28 @@ impl Population {
         let mut ret = p.copy();
         
         // Choose a branch off p to copy c to
-        match (*ret).r {
-            Some(_) => {
-                // p has two children.  Choose one randomly
-                if rng::random::<f64>()> 0.0 {
-                    // Left
-                    (*ret).l = Some(c);
-                }else{
-                    // Right
-                    (*ret).r = Some(c);
+        match p.d {
+            // This node has 3 legs
+
+            Some(_) =>
+                match rng::gen_range(0,3) {
+                    0 => (*ret).d = Some(c),
+                    1 => (*ret).l = Some(c),
+                    2 => (*ret).r = Some(c),
+                    _ => panic!("Impossible to get here"),
+                },
+            None =>
+                match p.r {
+                    Some(_) => 
+                    // This node has two legs
+                        if rng::random::<f64>()> 0.0 {
+                            (*ret).l = Some(c)
+                        }else{
+                            (*ret).r = Some(c)
+                        },
+                    None => (*ret).l = Some(c),
                 }
-            },
-            None => (*ret).l = Some(c),
-        };
+        }
         ret
     }
 }    
