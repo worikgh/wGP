@@ -114,34 +114,46 @@ pub fn score_individual(
 
     let mut class:Option<Class> = None; // The class this is specialised for
     for i in index {
+
         // Examine each example
+
+        // The data for this example
         let ref r = d.ith_row(*i);
+
+        // Prepare the inputes to the simulation
         for j in 0..d.names.len() {
             let v:f64 = r[j];
             let h = d.names[j].clone();
             inputs.insert(h.as_str(), v);
         }
-        let _class = r[d.names.len()-1].floor() as Class;
-        classes.entry(_class).or_insert(true);
-        
-        let e = node.evaluate(&inputs).unwrap();
+
         // Get the target
         let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
+
+        // Get the class of this example 
+        let _class = t.floor() as Class;
+        // println!("Target: {} Class: {} Should be same", t, _class);
+        
+        classes.entry(_class).or_insert(true);
+        
+        // Get the estimate
+        let e = node.evaluate(&inputs).unwrap();
+
         let s = (t-e).abs();
         if s.is_finite() && s < s_i {
             s_i = s;
 
             // Store the class this is best for
             class = Some(_class);
-        }else{
-            //println!("s {} s_i {}", s, s_i);
         }
         y_d.push(s);
     }
 
-    // Calculate the general score
-    let s_m:f64 = y_d.iter().fold(0.0, |mut sum, val| {sum += val; sum})/n;
-
+    // Calculate the general score. Invert general score, which is mean
+    // distance) to make bigger better
+    
+    let s_m:f64 = 1.0/y_d.iter().fold(0.0, |mut sum, val| {sum += val; sum})/n;
+    
     // Recalculate s_i the special score.  For  the selected class.
 
     // Given the number of classes = N
@@ -184,9 +196,7 @@ pub fn score_individual(
         None => (),
     };
     Score{special:acc,
-          // Invert general score, which is mean distance) to make
-          // bigger better
-          general:1.0/s_m,
+          general:s_m,
           class:class
     }
 }
