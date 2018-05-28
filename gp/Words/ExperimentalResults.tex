@@ -36,11 +36,13 @@ Answer some questions about using Genetic Programming as a classifier.
 \begin{enumerate}
 \item How does population size relate to performance?
 \item How much need is there for mutation?
-\item What sorts of problems can be solved?
+\item What sorts of classification problems can be solved?
 \item Can applying pruning rules to evolved functions, using domain
-  knowledge, help he process?
-\item How can we no when to stop a simulation? (Peak evaluation is
+  knowledge, help the process?
+\item How can we know when to stop a simulation? (Peak evaluation is
   usually reached soon)
+ 
+\item What impact does the selection method have?
 \end{enumerate}
 
 \section{Programme Structure}
@@ -89,7 +91,9 @@ Individuals with high specific fitness can be used to identify cases
 they are specialised for.
 
 During evolution selection is more complex.  A way must be found to
-select based on structured fitness.
+select based on structured fitness.  Should they?
+
+General selection shpould use general fitness
 
 When selecting for crossover individuals based on special fitness they
 should be matched with individuals specialised for the same class.
