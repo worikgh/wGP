@@ -15,10 +15,12 @@
     }
 
     impl Node {
+        #[allow(dead_code)]
         pub fn new_from_string(s:&str) -> Node {
             let mut iter = s.split_whitespace();
             Node::new_from_iter(&mut iter)
         }
+        #[allow(dead_code)]
         fn new_from_iter(iter:&mut std::str::SplitWhitespace) -> Node{
             
             let operator = match iter.next().unwrap() {
@@ -137,7 +139,7 @@
             let mut n = rng::gen_range(0, c);
             let mut node:& Node = self;
             loop {
-                // println!("Node: {} n {}", self.to_string(), n);
+
                 // Loop invariant n >= 0 Exit when a node with no left or
                 // right children is encountered or n == 0
                 if n == 0 {
@@ -163,7 +165,7 @@
 
                 if dc >= n {
                     // Wanted node is in decision sub-tree
-                    // println!("Go d: dc {}", dc);
+
                     if let Some(ref nd) = node.d {
                         node = &*nd;
 
@@ -185,7 +187,7 @@
 
                 if dc+lc >= n {
                     // Get node from left sub tree
-                    // println!("Go l: dc {} lc {}", dc, lc);
+
                     if let Some(ref nd) =  node.l {
                         node = &*nd;
 
@@ -200,7 +202,6 @@
                     }
                 }else{
 
-                    // println!("Go r: dc {} lc {}", dc, lc);
                     // Get node from right subtree
                     if let Some(ref nd) = node.r {
                         node = &*nd;

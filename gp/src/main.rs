@@ -4,12 +4,14 @@ extern crate rand;
 extern crate statistical;
 
 mod config;
+mod data;
 mod inputs;
 mod node;
 mod population;
 mod rng;
 mod score;
 use config::Config;
+use data::Data;
 use inputs::Inputs;
 use population::Population;
 use score::score_individual;
@@ -61,7 +63,7 @@ enum Operator {
     Terminal(TerminalType),
 }
 use node::NodeBox;
-use node::Node;
+//use node::Node;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,27 +72,22 @@ mod tests {
         let config = Config::new("config");
         let data_file = config.get_string("data_file").unwrap();
 
-        // The source of entropy.  This is done this way so the same seed
-        // can be used to produce repeatable results
-        let mut e = rng::get();
-
         // Load the data
         let mut d_all:Data = Data::new();
-        d_all.read_data(data_file.as_str(), 0, &mut e);
+        d_all.read_data(data_file.as_str(), 0);
         assert_eq!(d_all.training_i.len(), 0);
 
-        
-        d_all.read_data(data_file.as_str(), 100, &mut e);
+        d_all.read_data(data_file.as_str(), 100);
         assert_eq!(d_all.testing_i.len(), 0);
 
-        d_all.read_data(data_file.as_str(), 50, &mut e);
+        d_all.read_data(data_file.as_str(), 50);
         assert_ne!(d_all.testing_i.len(), 0);
         assert_ne!(d_all.training_i.len(), 0);
 
-        d_all.read_data(data_file.as_str(), 10, &mut e);
+        d_all.read_data(data_file.as_str(), 10);
         assert!(d_all.training_i.len()< d_all.testing_i.len(), 0);
 
-        d_all.read_data(data_file.as_str(), 90, &mut e);
+        d_all.read_data(data_file.as_str(), 90);
         assert!(d_all.training_i.len() > d_all.testing_i.len(), 0);
 
     }
@@ -179,139 +176,26 @@ mod tests {
     }
 }
 
-// Hold data for training or testing.
-pub struct Data {
-    
-    // Names of the columns
-    names:Vec<String>, 
 
-    // Each row is a hash keyed by names FIXME Inefficient(?) use of memory
-    rows:Vec<Vec<f64>>,
-
-    // Indexes into rows for training data
-    training_i:Vec<usize>,
-
-    // Indexes into rows for testing data
-    testing_i:Vec<usize>,
-
-    // Indexes into rows for all data
-    all_i:Vec<usize>,
-
-}
-
-impl Data {
-    #[allow(dead_code)]
-    /// Return all the data as a string
-    fn to_string(&self) -> String {
-        let mut ret = "".to_string();
-        for r in &self.rows {
-            for i in 0..self.names.len() {
-                ret.push_str(&r[i].to_string()[..]);
-                ret.push_str(",");
-            }
-            ret.push_str("\n");
-        }
-        ret
-    }
-    fn new() -> Data {
-        Data{
-            names:Vec::<String>::new(),
-            rows:Vec::<Vec<f64>>::new(),
-            testing_i:Vec::<usize>::new(),
-            training_i:Vec::<usize>::new(),
-            all_i:Vec::<usize>::new(),
-        }
-    }
-    fn reset(&mut self){
-        self.names = Vec::<String>::new();
-        self.rows = Vec::<Vec<f64>>::new();
-        self.testing_i = Vec::<usize>::new();
-        self.training_i = Vec::<usize>::new();
-        self.all_i = Vec::<usize>::new();
-    }        
-    fn ith_row(&self, i:usize) -> &Vec<f64> {
-        &self.rows[i]
-    }
-    fn add_name(& mut self, k:&str) {
-        self.names.push(k.to_string())
-    }
-    fn partition(&mut self, training_percent:usize){
-        // Partition the data into training and testing sets
-        for i in 0..self.rows.len() {
-            let z = rng::gen_range(0, 100);
-            if z < training_percent {
-                self.training_i.push(i);
-            }else{
-                self.testing_i.push(i);
-            }
-            self.all_i.push(i);
-        }
-    }        
-    fn add_row(&mut self, row:Vec<f64>){
-        self.rows.push(row);
-    }
-    // Read in the data from a file
-    fn read_data(&mut self, f_name:&str,
-                 training_percent:usize) {
-
-        // Must be in file f_name.  First row is header
-        self.reset();
-        let file = File::open(f_name).unwrap();
-        let mut buf_reader = BufReader::new(file);
-        let mut contents = String::new();
-        buf_reader.read_to_string(&mut contents).unwrap();
-        let mut lines = contents.lines();
-
-        // Get first line, allocate names 
-        let h = lines.nth(0);
-        let l = match h {
-            Some(l) =>   {
-                l
-            },
-            None => panic!(""),
-        };
-
-        let h:Vec<&str> = l.split(',').collect();
-        for s in h {
-            // s is a header
-            self.add_name(s);
-        }
-
-        // Loop over the data storing it in the rows
-        loop {
-            
-            let line = match lines.next() {
-                Some(l) => l,
-                None => break,
-            };
-            let d:Vec<&str> = line.split(',').collect();
-            let d:Vec<f64> = d.iter().map(|x| {x.parse::<f64>().unwrap()}).collect();
-
-            self.add_row(d);
-            
-        }
-        self.partition(training_percent);
-    }
-}
-
-
-// Do a simulation to evaluate a model.  Returns a vector of pairs.
-// The first element is true value the second is simulation result
-fn simulate(n:&NodeBox, d:&Data) -> Vec<(f64, f64)> {
+// Do a simulation to evaluate a model.  Pass a node, the class of the
+// node and some data.  Returns a vector of pairs.  The first element
+// is true value the second is simulation result
+fn simulate(n:&NodeBox, class:&str, d:&Data) -> Vec<(f64, f64)> {
     let mut ret:Vec<(f64, f64)> = vec![];
     let mut inputs = Inputs::new();
     let ref index = d.all_i;
     for i in index {
-        let ref r = d.rows[*i];
-        for j in 0..d.names.len() {
+        let ref r = d.data[*i];
+        for j in 0..d.input_names.len() {
             let v = r[j];
-            let h = d.names[j].clone();
+            let h = d.input_names[j].clone();
             inputs.insert(h.as_str(), v);
         }
         let e = n.evaluate(&inputs).unwrap();
+
         // Get the target
-        let t = inputs.get(d.names.last().unwrap()).unwrap();
-        ret.push((*t, e));
+        let t = d.data[*i][d.class_idx(class)];
+        ret.push((t as f64, e));
     }
     ret
 }
@@ -562,7 +446,6 @@ fn main() {
     let config = Config::new(cfg_file.as_str());
 
     // Load configuration data
-    let data_file = config.get_string("data_file").unwrap();
     let generations_file = config.get_string("generations_file").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
     let num_generations = config.get_usize("num_generations").unwrap();
@@ -572,7 +455,6 @@ fn main() {
     let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
     let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
     let sim_id = config.get_string("id").unwrap();
-    let training_percent = config.get_usize("training_percent").unwrap(); // The percentage of data to use as trainng
     
     // Set up output file to record each generation:  FIXME move this to population
     let mut generation_recorder = Recorder::new(generations_file.as_str());
@@ -587,50 +469,34 @@ fn main() {
                           sim_id.as_str(),
     );
 
-    // The source of entropy.  This is done this way so the same seed
-    // can be used to produce repeatable results let mut e =
-
+    // The source of entropy.  
     rng::reseed(seed.as_slice());
 
-    // Two modes of operation: One is eevaluating a single model (the
-    // model is passed using the 'eval' configuration keyword) or run
-    // a simulation
-    if let Some(ns) = config.get_string("eval") {
-        // Load the data
-        let mut d_all = Data::new();
-        d_all.read_data(data_file.as_str(), training_percent);
-        let n = NodeBox::new(Node::new_from_string(ns.as_str()));
-        let s = (*n).to_string();
-        let sc = score_individual(&n, &d_all, true);
-        println!("{} General: {} Special: {}", s, sc.general, sc.special);;
-        
-    }else{
-        // Running a simulation
-        
-        // Create a population. 
-        println!("Population start");
-        let mut population = Population::new(&config);
-        population.initialise();
-        
-        println!("Created initial population {}", population.len());
+    // Create a population. 
+    println!("Population start");
+    let mut population = Population::new(&config);
+    population.initialise();
+    
+    println!("Created initial population {}", population.len());
 
-        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+    // Write the header for the generaion file
+    let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+    generation_recorder.write_line(&s[..]);
+    generation_recorder.buffer.flush().unwrap();
+
+    for generation in 0..num_generations {
+        // Main loop
+        
+        population.new_generation(generation);
+        let s = format!("{} {} {} {} {}",
+                        generation,
+                        population.best_id(),
+                        population.best_score().special,
+                        population.len(),
+                        population.get_tree_id(population.best_id()).1.to_string());
         generation_recorder.write_line(&s[..]);
         generation_recorder.buffer.flush().unwrap();
-        for generation in 0..num_generations {
-            // Main loop
-            
-            population.new_generation(generation);
-            let s = format!("{} {} {} {} {} {}",
-                            generation,
-                            population.best_id(),
-                            population.best_score().general,
-                            population.best_score().special,
-                            population.len(),
-                            population.get_tree_id(population.best_id()).1.to_string());
-            generation_recorder.write_line(&s[..]);
-            generation_recorder.buffer.flush().unwrap();
-        }
-        println!("Bye!");
     }
+    println!("Bye!");
 }
+

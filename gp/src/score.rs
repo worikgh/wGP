@@ -1,10 +1,9 @@
 use super::NodeBox;
 use super::Data;
-use population::Class;
+//use data::Class;
 use inputs::Inputs;
 use std::cmp::Ordering;
-use std::collections::HashMap;    
-use std;
+//use std;
 // Scoring a individual is key to evolving a good population of
 // individuals.
 
@@ -32,41 +31,27 @@ use std;
 
 // To this end the score of a individual is a struct not a f64
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Score {
     // Fitness calculated hen classifying to self.class.unwrap()
     pub special:f64,
 
-    //  The class this score is specialised for. Obtained from the
-    //  objective data
-    pub class:Option<Class>,
-
-    // The mean clasification score
-    pub general:f64,
-
-
-    // // ID of the tree this score is for
-    // id:usize,
-
-    // // Reset to false on construction and set to true when scores
-    // // calculated
-    // initialised:bool,
+    //  The name of the class this score is specialised for. Obtained
+    //  from the objective data
+    pub class:String,
 }
 
 impl Score {
     // pub fn new(id:usize) -> Score {
     //     Score {id:id, special:0.0, general:0.0, initialise:false}
     // }
+
+    // pub fn Copy(&self) -> Score {
+    //     Score{class:self.class.clone(), special:self.special}
+    // }
     
     pub fn evaluate(&self) -> f64 {
-        // Project the two dimensional score onto one dimension for
-        // sorting and selection
-
-        // FIXME This may or may not be crucial.  Weighting of the two
-        // scores may or may not be highly critical and domain
-        // specific.  It will influence how the simulation leans to
-        // specificity or generality
-        (self.general * self.general + self.special * self.special).sqrt()
+        self.special
     }
     
     pub fn partial_cmp(&self, other:&Score) -> Option<Ordering> {
@@ -74,21 +59,27 @@ impl Score {
         self.evaluate().partial_cmp(&other.evaluate())
     }
     pub fn is_finite(&self) -> bool {
-        self.special.is_finite() && self.general.is_finite()
+        self.special.is_finite()
     }
 
     pub fn copy(&self) -> Score {
-        Score{general:self.general, special:self.special, class:self.class}
+        Score{special:self.special, class:self.class.clone()}
     }
     // Calculate the score of a indvidual against the data Param n: The
     // individual Param d: The data to use.  'use_testing' is true if the
     // individual is to be scored on the testing set.
 
 }
+
+
 pub fn score_individual(
-                            node:&NodeBox,
-                            d:&Data,
-                            use_testing:bool) -> Score {
+    node:&NodeBox,
+    classes:&Vec<String>,
+    d:&Data,
+    use_testing:bool) -> Score {
+
+    // Score individual is called once per node on creation. FIXME
+    // Call it from Node::new
 
     // Get the data to do the evaluation on
     let mut inputs = Inputs::new();
@@ -99,105 +90,59 @@ pub fn score_individual(
         index = &d.training_i;
     }
 
-    // Keep a record of hat objective cases are in the data to help
-    // decide on a value for the special fitness.  We cannot hash f64
-    // so we must convert it to the nearest i64 floorwards
-    let mut classes:HashMap<Class, bool> = HashMap::new();
-    
-    // To calculate the mean count examples
-    let n = index.len() as f64;
+    let mut c:String = "".to_string();
+    let mut best_s = -1.0;
 
-    // Store each distance from the estimate to the actual value
-    // to calculate best and mean estimate
-    let mut y_d:Vec<f64> = Vec::new(); // Distances
-    let mut s_i = std::f64::MAX; // The minimum score
+    for class in classes {
+        // Store each distance from the estimate to the actual value
+        // to calculate best and mean estimate
+        let mut y_d:Vec<f64> = Vec::new(); // Distances
 
-    let mut class:Option<Class> = None; // The class this is specialised for
-    for i in index {
-
-        // Examine each example
-
-        // The data for this example
-        let ref r = d.ith_row(*i);
-
-        // Prepare the inputes to the simulation
-        for j in 0..d.names.len() {
-            let v:f64 = r[j];
-            let h = d.names[j].clone();
-            inputs.insert(h.as_str(), v);
-        }
-
-        // Get the target
-        let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
-
-        // Get the class of this example 
-        let _class = t.floor() as Class;
-        // println!("Target: {} Class: {} Should be same", t, _class);
+        let n = d.class_names.len();
         
-        classes.entry(_class).or_insert(true);
-        
-        // Get the estimate
-        let e = node.evaluate(&inputs).unwrap();
+        for i in index {
 
-        let s = (t-e).abs();
-        if s.is_finite() && s < s_i {
-            s_i = s;
+            // Examine each example
 
-            // Store the class this is best for
-            class = Some(_class);
+            // The data for this example
+            let ref r = d.ith_row(*i);
+
+            // Prepare the inputs to the simulation
+            for j in 0..d.input_names.len() {
+                let v:f64 = r[j];
+                let h = d.input_names[j].clone();
+                inputs.insert(h.as_str(), v);
+            }
+
+            // Is this example in the class of this node?
+            let c = d.ith_row(*i);
+            let t = c[d.class_idx(class)];
+
+            // Get the estimate
+            let e = node.evaluate(&inputs).unwrap();
+
+            // Score: See ExperimentalResults.tex for explanation of ho
+            // this is calculated
+            if t == 1.0 {
+                // This individual is classifying for the class of this
+                // example.  
+                y_d.push(1.0/(1.0+(1.0 - e).abs()))
+            }else{
+                y_d.push(-1.0/((n as f64)*(1.0+(1.0 - e).abs())))
+            }
         }
-        y_d.push(s);
+        let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
+        if s < 0.0 { s = 0.0 }
+        if s > best_s {
+            c = class.clone();
+            best_s = s;
+        }
     }
 
-    // Calculate the general score. Invert general score, which is mean
-    // distance) to make bigger better
-    
-    let s_m:f64 = 1.0/y_d.iter().fold(0.0, |mut sum, val| {sum += val; sum})/n;
-    
-    // Recalculate s_i the special score.  For  the selected class.
-
-    // Given the number of classes = N
-    let n = classes.len();
-    
-    // Start a accumulator: acc at 0.0;
-    let mut acc = 0.0;
-
-    // For each data row if the objective is the class specialising
-    // this score for add 1/distance to acc.  Else subtract
-    // 1/(N*distance) from the score.  At the end if the score is less
-    // than zero set it to zero
-    match class {
-        Some(c) => {
-            let this_class = c;
-            for i in index {
-                // Examine each example
-                let ref r = d.ith_row(*i);
-                for j in 0..d.names.len() {
-                    let v:f64 = r[j];
-                    let h = d.names[j].clone();
-                    inputs.insert(h.as_str(), v);
-                }
-                let e = node.evaluate(&inputs).unwrap();
-                // Get the target
-                let t:f64 = *inputs.get(d.names.last().unwrap()).unwrap();
-                let _class = t.floor() as Class;
-                let s = (t-e).abs();
-
-                if this_class == class.unwrap() {
-                    acc += 1.0/(1.0+s);
-                }else{
-                    acc -= 1.0/(1.0+(n as f64)*s);
-                }
-            }
-            if acc < 0.0 {
-                acc = 0.0;
-            }
-        },
-        None => (),
-    };
-    Score{special:acc,
-          general:s_m,
-          class:class
+    Score{special:best_s,
+          // FIXME This should be a reference with a life time.  This
+          // string should be in population.class_names only
+          class:c
     }
 }
 
