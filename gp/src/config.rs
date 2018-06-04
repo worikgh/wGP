@@ -32,6 +32,7 @@ impl Config {
             _ => panic!("Failed config. {} as usize", k),
         }
     }        
+    #[allow(dead_code)]
     pub fn get_f64(&self, k:&str) -> Option<f64> {
         match self._get(k).parse::<f64>() {
             Ok(v) => Some(v),
