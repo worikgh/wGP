@@ -57,6 +57,19 @@ impl Data {
             }
     }
 
+    pub fn get_class(&self, i:usize) -> &String {
+        let row = &self.data[i];
+        let mut ret:Option<&String> = None;
+        let start =  self.input_names.len();
+        let end = start + self.class_names.len();
+        for j in start..end {
+            if row[j] == 1.0 {
+                ret = Some(&self.class_names[j-start]);
+                break;
+            }
+        }
+        ret.unwrap()
+    }
     #[allow(dead_code)]
     /// Return all the data as a string
     // fn to_string(&self) -> String {
@@ -138,7 +151,6 @@ impl Data {
             None => panic!(""),
 
         };
-        println!("names: {}", l_names);
 
         // Get second line for column types
         let h = lines.nth(0);
@@ -149,12 +161,9 @@ impl Data {
             None => panic!(""),
         };
 
-        println!("indicate: {}", l_indicate);
         // FIXME Why over two lines?
         let h_ind1:Vec<&str> = l_indicate.split(',').collect();
-        println!("h_ind1: {:?}", h_ind1);
         let h_ind:Vec<usize> = h_ind1.iter().map(|x| {x.parse::<usize>().unwrap()}).collect();
-        println!("h_ind: {:?}", h_ind);
         // let h_ind = h_ind2.map(|x| x.parse::<usize>().unwrap()).collect();
 
         let h_names:Vec<&str> = l_names.split(',').collect();
@@ -170,7 +179,6 @@ impl Data {
             // Get the name of input/class
             let s = h_names.iter().nth(i).unwrap();
             
-            println!("s {} i {} ",s, i);
             let f = *h_ind.iter().nth(i).unwrap();
             if f == 1 {
                 // This is input

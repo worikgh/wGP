@@ -63,7 +63,8 @@ impl Score {
     }
 
     pub fn copy(&self) -> Score {
-        Score{special:self.special, class:self.class.clone()}
+        let class = self.class.clone();
+        Score{special:self.special, class:class}
     }
     // Calculate the score of a indvidual against the data Param n: The
     // individual Param d: The data to use.  'use_testing' is true if the
@@ -90,8 +91,8 @@ pub fn score_individual(
         index = &d.training_i;
     }
 
-    let mut c:String = "".to_string();
-    let mut best_s = -1.0;
+    let mut c:Option<String> = None;
+    let mut best_s = 0.0;
 
     for class in classes {
         // Store each distance from the estimate to the actual value
@@ -115,13 +116,13 @@ pub fn score_individual(
             }
 
             // Is this example in the class of this node?
-            let c = d.ith_row(*i);
-            let t = c[d.class_idx(class)];
+            let _c = d.ith_row(*i);
+            let t = _c[d.class_idx(class)];
 
             // Get the estimate
             let e = node.evaluate(&inputs).unwrap();
 
-            // Score: See ExperimentalResults.tex for explanation of ho
+            // Score: See ExperimentalResults.tex for explanation of how
             // this is calculated
             if t == 1.0 {
                 // This individual is classifying for the class of this
@@ -132,9 +133,10 @@ pub fn score_individual(
             }
         }
         let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
-        if s < 0.0 { s = 0.0 }
-        if s > best_s {
-            c = class.clone();
+        if !s.is_finite() || s < 0.0 { s = 0.0 }
+
+        if s >= best_s {
+            c = Some(class.clone());
             best_s = s;
         }
     }
@@ -142,7 +144,7 @@ pub fn score_individual(
     Score{special:best_s,
           // FIXME This should be a reference with a life time.  This
           // string should be in population.class_names only
-          class:c
+          class:c.unwrap()
     }
 }
 

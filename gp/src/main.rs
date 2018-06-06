@@ -497,6 +497,8 @@ fn main() {
         generation_recorder.write_line(&s[..]);
         generation_recorder.buffer.flush().unwrap();
     }
+    // Do classification
+    population.classify_test();
     println!("Bye!");
 }
 

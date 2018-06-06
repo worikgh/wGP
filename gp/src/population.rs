@@ -3,6 +3,7 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
+use inputs::Inputs;
 use score::Score;
 use std::cmp::Ordering;
 use std::collections::HashMap;    
@@ -73,6 +74,64 @@ impl Population {
     pub fn len(&self) -> usize {
         self.trees.len()
     }
+
+    fn classify(&self, case:&Vec<f64>) -> String {
+        // Classify a case using the population.  @param `case` is
+        // the case to classify.  The data is pased as it contains
+        // the column headers therefore case names
+
+        // Create the input structure
+        let mut input = Inputs::new();
+        for j in 0..self.d_all.input_names.len() {
+            let v:f64 = case[j];
+            input.insert(&self.d_all.input_names[j], v);
+        }
+
+        // Store the results of each classifier.  The class of the
+        // classifier is used as the key and keep each result and the
+        // score/quality
+        let mut results:HashMap<&String, Vec<(f64,f64)>> = HashMap::new();
+        for c in self.d_all.class_names.iter() {
+            results.insert(c, Vec::new());
+        }
+        for t in self.trees.iter() {
+            // Using each classifier
+            let class = &t.2.class;
+            let score = t.1.evaluate(&input).unwrap();
+            if score.is_finite() {
+                let quality = t.2.special;
+                results.get_mut(class).unwrap().push((quality, score));
+            }
+        }
+
+        // Interpretation.  The class with the highest score, weighted
+        // by the quality (score.special) and divided by the count of
+        // classifiers, is the class to choose.  The magnitude of the
+        // score relative to ho many classifiers contributed is a
+        // measure of quality of classification.  As is the score for
+        // other classes
+
+        let mut scores:Vec<(&String, f64)> = Vec::new();
+        for k in self.d_all.class_names.iter() {
+            let count = results.get(k).unwrap().len();
+            let score = match count {
+                0 => 0.0,
+                _ => results.get(k).unwrap().iter().fold(0.0, |mut sum, &x| {sum += x.0*x.1; sum})  / (count  as f64)
+            };
+            println!("class {} score {} ", k, score);
+            scores.push((&k, score));
+        }
+
+        scores.sort_by(|a,b| {
+            let a1 = &a.1;
+            let b1 = &b.1;
+            b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
+        });
+
+        format!("{:?}", scores)
+
+    }
+    
     fn check_peek(&mut self, generation:usize){
         let best_idx = self.best_idx();
         let _best_id = self.trees[best_idx].0;
@@ -113,6 +172,18 @@ impl Population {
             }
         }
     }
+
+    fn check(&self) -> bool {
+        let mut ret = true;
+        for i in self.trees.iter() {
+            if !i.2.special.is_finite() {
+                ret = false;
+                break;
+            }
+        }
+        ret
+    }
+    
     fn stats(&self) -> String {
 
         let mut nns = 0;  // Count individuals with special score > not a number
@@ -284,6 +355,9 @@ impl Population {
         }
         r.write_line(&l1);
         r.write_line(&l2);
+        if ! self.check() {
+            panic!("Check failed");
+        }
     }
 
     fn _unique_node(&self) -> NodeBox {
@@ -425,7 +499,7 @@ impl Population {
         }else{
             0.0
         });
-        
+
         if total_score == 0.0 {
             trees[rng::gen_range(0, trees.len() - 1)].0
         }else{
@@ -434,11 +508,11 @@ impl Population {
             let mut  acc = 0.0;
             let mut ret:Option<usize> = None;  // Index of selected individual
             for i in trees.iter() {
+                acc += i.2.evaluate();
                 if acc > sel {
                     ret = Some(i.0);
                     break;
                 }
-                acc += i.2.evaluate();
             }
             match ret {
                 Some(r) => r,
@@ -606,6 +680,16 @@ impl Population {
                 }
         }
         ret
+    }
+    pub fn classify_test(&self){
+        let mut classification_recorder = Recorder::new("Classification.txt");
+        let ref index = self.d_all.testing_i;
+        for i in index {
+            let ref r = self.d_all.data[*i];
+            let s = self.classify(r);
+            let c = self.d_all.get_class(*i);
+            classification_recorder.write_line(format!("Class: {}  Classification: {}", c, s).as_str());
+        }        
     }
 }    
 
