@@ -118,7 +118,6 @@ impl Population {
                 0 => 0.0,
                 _ => results.get(k).unwrap().iter().fold(0.0, |mut sum, &x| {sum += x.0*x.1; sum})  / (count  as f64)
             };
-            println!("class {} score {} ", k, score);
             scores.push((&k, score));
         }
 
@@ -128,7 +127,14 @@ impl Population {
             b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
         });
 
-        format!("{:?}", scores)
+        let mut ret = String::new();
+        for s in scores {
+            ret += s.0;
+            ret += " ";
+            ret += s.1.to_string().as_str();
+            ret += " ";
+        }
+        ret
 
     }
     
