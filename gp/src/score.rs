@@ -31,7 +31,7 @@ use std::cmp::Ordering;
 
 // To this end the score of a individual is a struct not a f64
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Score {
     // Fitness calculated hen classifying to self.class.unwrap()
     pub special:f64,
@@ -75,7 +75,6 @@ impl Score {
 
 pub fn score_individual(
     node:&NodeBox,
-    classes:&Vec<String>,
     d:&Data,
     use_testing:bool) -> Score {
 
@@ -94,7 +93,7 @@ pub fn score_individual(
     let mut c:Option<String> = None;
     let mut best_s = 0.0;
 
-    for class in classes {
+    for  class in d.class_names.iter() {
         // Store each distance from the estimate to the actual value
         // to calculate best and mean estimate
         let mut y_d:Vec<f64> = Vec::new(); // Distances
