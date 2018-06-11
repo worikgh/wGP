@@ -24,6 +24,7 @@ use super::rng;
 //pub type Class = f64; // {1.0,0.0}
 
 // Hold data for training or testing.
+#[derive(Debug)]
 pub struct Data {
     
     // Names of the columns
@@ -89,8 +90,8 @@ impl Data {
     //     }
     //     ret
     // }
-    pub fn new() -> Data {
-        Data{
+    pub fn new(data_file:&String, training_percent:usize) -> Data {
+        let mut ret = Data{
             input_names:Vec::<String>::new(),
             class_names:Vec::<String>::new(),
             kind:Vec::new(),
@@ -98,7 +99,9 @@ impl Data {
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
             all_i:Vec::<usize>::new(),
-        }
+        };
+        ret.read_data(data_file, training_percent);
+        ret
     }
     fn reset(&mut self){
         self.input_names = Vec::<String>::new();
@@ -129,8 +132,8 @@ impl Data {
         }
     }        
     // Read in the data from a file
-    pub fn read_data(&mut self, f_name:&str,
-                     training_percent:usize) {
+    fn read_data(&mut self, f_name:&str,
+                 training_percent:usize) {
 
         // Must be in file f_name.  First row is a header with names.
         // Second is a row that indicates which columns are inputs and
