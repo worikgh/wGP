@@ -1,5 +1,4 @@
-#[macro_use]
-extern crate lazy_static;
+#[macro_use] extern crate lazy_static;
 extern crate rand;
 extern crate statistical;
 
@@ -24,7 +23,6 @@ use std::io::BufWriter;
 use std::io::prelude::*;
 use std::path::Path;
 use std::time::SystemTime;
-
 
 // The type of data that can be a terminal
 #[derive(Debug)]
@@ -404,6 +402,7 @@ dev.off()
 }
 
 
+
 pub struct Recorder {
     // Manage writing data to a file.  The constructor takes a file
     // name and creates a buffered writer to the file.  Ha a "write"
@@ -448,6 +447,7 @@ fn main() {
     // Load configuration data
     let generations_file = config.get_string("generations_file").unwrap();
     let model_data_file = config.get_string("model_data_file").unwrap();
+    let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
     let num_generations = config.get_usize("num_generations").unwrap();
     let plot_file = config.get_string("plot_file").unwrap();
     let plot_xlab = config.get_string("plot_xlab").unwrap();
@@ -455,6 +455,8 @@ fn main() {
     let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
     let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
     let sim_id = config.get_string("id").unwrap();
+    let data_file = config.get_string("data_file").unwrap() ;
+    let training_percent = config.get_usize("training_percent").unwrap();
     
     // Set up output file to record each generation:  FIXME move this to population
     let mut generation_recorder = Recorder::new(generations_file.as_str());
@@ -474,9 +476,10 @@ fn main() {
 
     // Create a population. 
     println!("Population start");
-    let mut population = Population::new(&config);
+    let data = Data::new(&data_file, training_percent);
+    let bnd_recorder = Recorder::new(birthsanddeaths_file.as_str());
+    let mut population = Population::new(&config, &data, bnd_recorder);
     population.initialise();
-    
     println!("Created initial population {}", population.len());
 
     // Write the header for the generaion file
@@ -484,21 +487,30 @@ fn main() {
     generation_recorder.write_line(&s[..]);
     generation_recorder.buffer.flush().unwrap();
 
-    for generation in 0..num_generations {
-        // Main loop
-        
-        population.new_generation(generation);
-        let s = format!("{} {} {} {} {}",
-                        generation,
-                        population.best_id(),
-                        population.best_score().special,
-                        population.len(),
-                        population.get_tree_id(population.best_id()).1.to_string());
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
+    if population.do_train() {
+
+
+
+        for generation in 0..num_generations {
+            // Main loop
+            
+            population.new_generation(generation);
+            let s = format!("{} {} {} {} {}",
+                            generation,
+                            population.best_id(),
+                            population.best_score().special,
+                            population.len(),
+                            population.get_tree_id(population.best_id()).1.to_string());
+            generation_recorder.write_line(&s[..]);
+            generation_recorder.buffer.flush().unwrap();
+        }
     }
-    // Do classification
-    population.classify_test();
+
+    if population.do_classify() {
+        // Do classification
+        population.classify_test();
+    }
     println!("Bye!");
+        
 }
 
