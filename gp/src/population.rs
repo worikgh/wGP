@@ -7,6 +7,13 @@ use inputs::Inputs;
 use score::Score;
 use std::cmp::Ordering;
 use std::collections::HashMap;    
+use std::fs::File;
+use std::io::prelude::*;
+//use std::from_str::from_str;
+//use std::fs::OpenOptions;
+use std::io::BufReader;
+use std::io::BufWriter;
+//use std::io::File;
 use std::io::Write;
 use std;
 use super::Data;
@@ -17,38 +24,49 @@ use super::simulate;
 // Define a individual.  Consists of a node, a id, and a score.  Called
 // a Tree because it is not a sub-tree...
 type Tree = (usize, NodeBox, Score); 
-    
 
-pub struct Population {
+enum Mode {
+    Create, // Build a tree from scratch
+    Resume, // Read a tree from a file and contine evolving it
+    Run, // Read a tree from a file and use it as a classifier
+}
+pub struct Population<'a> {
     trees:Vec<Tree>,
     str_rep:HashMap<String, bool>,
     maxid:usize,
+
     bnd_rec: Recorder,
-    d_all:Data,
+
+    d_all:&'a Data,
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
     best_id:usize,
     best_individual:String,
     model_data_file:String,
+    save_file:String,
+    classification_file:String,
     input_names:Vec<String>,
     max_population:usize,
-
+    mode:Mode,
 }
 
-impl Population {
-    pub fn new(config:&Config) -> Population {
+impl<'a> Population<'a> {
+    pub fn new(config:&Config, d_all:&'a Data, bnd_rec:Recorder) -> Population<'a> {
         // Load the data
-        let mut d_all = Data::new();
-        let df = config.get_string("data_file").unwrap() ;
-        let dp = config.get_usize("training_percent").unwrap();
-        d_all.read_data(df.as_str(), dp);
-
+        //let mut d_all = Data::new();
         let ret = Population{trees:Vec::new(),
                              str_rep:HashMap::new(),
+                             mode:match config.get_string("mode").unwrap().as_str(){
+                                 "Create" => Mode::Create,
+                                 "Resume" => Mode::Resume,
+                                 "Run" => Mode::Run,
+                                 x => panic!("{}", x),
+                             },
                              input_names:d_all.input_names.clone(),
                              maxid:0,
-                             bnd_rec:Recorder::new(config.get_string("birthsanddeaths_file").unwrap().as_str()),
+                             save_file:config.get_string("save_file").unwrap(),
+                             bnd_rec:bnd_rec,
                              crossover_percent:config.get_usize("crossover_percent").unwrap(),
                              d_all:d_all,
                              max_population:config.get_usize("max_population").unwrap(),
@@ -56,12 +74,55 @@ impl Population {
                              copy_prob:config.get_usize("copy_prob").unwrap(),
                              best_id:0, best_individual:"".to_string(),
                              model_data_file:config.get_string("model_data_file").unwrap(),
+                             classification_file:config.get_string("classification_file").unwrap(),
                              
         };
         ret
     }
 
+    fn initialise_rand(&mut self){
+        // Initialise with a random tree
+        loop {
+            // Random individual.  Returns true when a unique
+            // individual is created.
+            while !self.add_individual() {} 
+            if self.len() == self.max_population {
+                break;
+            }
+        }
+    }        
+    pub fn initialise(&mut self){
 
+
+        match  self.mode {
+             Mode::Create => {
+                 loop {
+                     self.initialise_rand();
+                     self.cull_sort();
+                     if self.len() > 0 {
+                         break;
+                     }
+                 }
+             },
+            _ => self.trees = self.restore_trees(),
+        }
+    }
+
+
+    // FIXME The mode should be stored outside the population
+    pub fn do_classify(&self) -> bool {
+        match self.mode {
+            Mode::Run => true,
+            _ => false,
+        }
+    }
+    pub fn do_train(&self) -> bool {
+        match self.mode {
+            Mode::Run => false,
+            _ => true,
+        }
+    }
+    
     fn best_idx(&self) -> usize {
         0
     }    
@@ -250,7 +311,7 @@ impl Population {
             self.str_rep.entry(st.clone()).or_insert(false);
             if !self.str_rep.get(&st).unwrap() {
                 // A unique child
-                let sc = score_individual(&nb, &self.d_all.class_names, &self.d_all, true);
+                let sc = score_individual(&nb, &self.d_all, true);
                 self.maxid += 1;
                 let id = self.maxid;
                 self.str_rep.insert(st, true);
@@ -284,7 +345,7 @@ impl Population {
                 if !self.str_rep.get(&sc_1).unwrap() {
                     // Unique in the new population
 
-                    let sc = score_individual(&nb, &self.d_all.class_names, &self.d_all, true);
+                    let sc = score_individual(&nb, &self.d_all, true);
                     self.maxid += 1;
                     let id = self.maxid;
 
@@ -364,6 +425,7 @@ impl Population {
         if ! self.check() {
             panic!("Check failed");
         }
+        self.save_trees();
     }
 
     fn _unique_node(&self) -> NodeBox {
@@ -464,26 +526,6 @@ impl Population {
     }
 
     
-    fn _initialise(&mut self){
-        loop {
-            // Random individual.  Returns true when a unique
-            // individual is created.
-            while !self.add_individual() {} 
-            if self.len() == self.max_population {
-                break;
-            }
-        }
-    }        
-    pub fn initialise(&mut self){
-        loop {
-            self._initialise();
-            self.cull_sort();
-            if self.len() > 0 {
-                break;
-            }
-        }
-    }
-    
     //===============================================================
     //
     // Selection algorithms.
@@ -548,7 +590,7 @@ impl Population {
             self.maxid += 1;
             self.str_rep.insert(st, true);
 
-            let sc = score_individual(&n, &self.d_all.class_names, &self.d_all, true);
+            let sc = score_individual(&n, &self.d_all, true);
             {
                 self.bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", self.maxid, sc.special, n.to_string()));
                 self.trees.push((self.maxid, n, sc));
@@ -688,7 +730,7 @@ impl Population {
         ret
     }
     pub fn classify_test(&self){
-        let mut classification_recorder = Recorder::new("Classification.txt");
+        let mut classification_recorder = Recorder::new(&self.classification_file);
         let ref index = self.d_all.testing_i;
         for i in index {
             let ref r = self.d_all.data[*i];
@@ -696,6 +738,44 @@ impl Population {
             let c = self.d_all.get_class(*i);
             classification_recorder.write_line(format!("Class: {}  Classification: {}", c, s).as_str());
         }        
+    }
+
+    pub fn restore_trees(&self) -> Vec<Tree> {
+        // Read in saved state from a file, build a population from
+        // it, and return the population
+        let f = File::open(&self.save_file).unwrap();
+        let buf = BufReader::new(f);
+        let mut max_id = 1;
+        
+        let mut trees:Vec<Tree> = Vec::new();
+        for line in buf.lines() {
+            match line {
+                Ok(l) => {
+                    let start = &l[0..4]; // "Node"
+                    if start == "Node" {
+                        let node = NodeBox::new(Node::new_from_string(&l[4..]));
+                        let sc = score_individual(&node, &self.d_all, true);
+                        let tree = (max_id, node, sc);
+                        trees.push(tree);
+                        max_id += 1;
+                    }
+                },
+                Err(e) => panic!(e)
+            }
+        }
+        trees
+    }
+    pub fn save_trees(&self){
+        let mut state = String::new();
+        for i in 0..self.trees.len() {
+            let t = &self.trees[i];
+            state += &format!("Node{}\n", t.1.to_string());
+        }
+        
+        let mut buf = BufWriter::new(File::create(&self.save_file).unwrap());
+        buf.write(&state.into_bytes()[..]).unwrap();
+
+        
     }
 }    
 
