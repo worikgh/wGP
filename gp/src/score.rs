@@ -72,7 +72,18 @@ impl Score {
 
 }
 
+#[inline]
+fn loss_function(y_:f64, y:f64) -> f64 {
+    // y_ is the estimate, y the true value
 
+    // Hinge loss
+    let loss = 1.0-y_*y;
+    if loss < 0.0 {
+        0.0
+    }else{
+        loss
+    }
+}
 pub fn score_individual(
     node:&NodeBox,
     d:&Data,
@@ -98,8 +109,6 @@ pub fn score_individual(
         // to calculate best and mean estimate
         let mut y_d:Vec<f64> = Vec::new(); // Distances
 
-        let n = d.class_names.len();
-        
         for i in index {
 
             // Examine each example
@@ -115,21 +124,14 @@ pub fn score_individual(
             }
 
             // Is this example in the class of this node?
-            let _c = d.ith_row(*i);
-            let t = _c[d.class_idx(class)];
+            let t = r[d.class_idx(class)];
 
             // Get the estimate
             let e = node.evaluate(&inputs).unwrap();
 
-            // Score: See ExperimentalResults.tex for explanation of how
-            // this is calculated
-            if t == 1.0 {
-                // This individual is classifying for the class of this
-                // example.  
-                y_d.push(1.0/(1.0+(1.0 - e).abs()))
-            }else{
-                y_d.push(-1.0/((n as f64)*(1.0+(1.0 - e).abs())))
-            }
+            // Score: See ExperimentalResults.tex for explanation of
+            // the loss function
+            y_d.push(loss_function(t, e));
         }
         let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
         if !s.is_finite() || s < 0.0 { s = 0.0 }
