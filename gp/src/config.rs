@@ -31,7 +31,7 @@ impl Config {
             Some(v) => v,
             _ => panic!("Failed config. {} as usize", k),
         }
-    }        
+    }
     #[allow(dead_code)]
     pub fn get_f64(&self, k:&str) -> Option<f64> {
         match self._get(k).parse::<f64>() {
@@ -41,11 +41,8 @@ impl Config {
     }
     pub fn get_usize(&self, k:&str) -> Option<usize> {
         match self._get(k).parse::<usize>() {
-            Ok(v) => Some(v),
-            _ => {
-                None
-            },
-            
+            Ok(x) => Some(x),
+            _ => None,
         }
     }
     pub fn get_string(&self, k:&str) -> Option<String> {
