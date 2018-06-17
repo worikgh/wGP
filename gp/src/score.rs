@@ -76,6 +76,9 @@ impl Score {
 fn loss_function(y_:f64, y:f64) -> f64 {
     // y_ is the estimate, y the true value
 
+    // True value is -1.0 if this the input is not a member of the class
+    // the individual tests for, and 1.0 if it is
+    
     // Hinge loss
     let loss = 1.0-y_*y;
     if loss < 0.0 {
@@ -84,13 +87,14 @@ fn loss_function(y_:f64, y:f64) -> f64 {
         loss
     }
 }
+
 pub fn score_individual(
     node:&NodeBox,
     d:&Data,
     use_testing:bool) -> Score {
 
-    // Score individual is called once per node on creation. FIXME
-    // Call it from Node::new
+    // Score individual is called once per node.  Classifies it
+    // (decides what class it is for) and gives it a rating
 
     // Get the data to do the evaluation on
     let mut inputs = Inputs::new();
@@ -123,8 +127,15 @@ pub fn score_individual(
                 inputs.insert(h.as_str(), v);
             }
 
-            // Is this example in the class of this node?
-            let t = r[d.class_idx(class)];
+            // Is this example in the class of this node?  True value
+            // is -1.0 if this the input is not a member of the class
+            // the individual tests for, and 1.0 if it is for.
+
+            let t = if r[d.class_idx(class)] > 0.0 {
+                1.0
+            }else{
+                -1.0
+            };
 
             // Get the estimate
             let e = node.evaluate(&inputs).unwrap();
@@ -136,6 +147,11 @@ pub fn score_individual(
         let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
         if !s.is_finite() || s < 0.0 { s = 0.0 }
 
+        // The score must be increasing with quality.  The above is a
+        // quantity to minimise.  Cannot use a direct inverse as a
+        // zero will cause a exception.  Zero is the floor of s
+        s = 1.0/(1.0+s);
+        
         if s >= best_s {
             c = Some(class.clone());
             best_s = s;
