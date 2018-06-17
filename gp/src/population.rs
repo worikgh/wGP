@@ -18,9 +18,8 @@ use std::io::Write;
 use std;
 use super::Data;
 use super::Recorder;
-use super::add_simulation;
 use super::score_individual;
-use super::simulate;
+
 // Define a individual.  Consists of a node, a id, and a score.  Called
 // a Tree because it is not a sub-tree...
 type Tree = (usize, NodeBox, Score); 
@@ -41,22 +40,42 @@ pub struct Population<'a> {
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
-    best_id:usize,
-    best_individual:String,
-    model_data_file:String,
     save_file:String,
     classification_file:String,
     input_names:Vec<String>,
     max_population:usize,
     mode:Mode,
+
+    // If non 0 pick best 'filter' rules
+    filter:usize, 
+
+    // If set then then when reading in trees reclassify them with
+    // score_individual
+    rescore:bool, 
 }
 
 impl<'a> Population<'a> {
     pub fn new(config:&Config, d_all:&'a Data, bnd_rec:Recorder) -> Population<'a> {
         // Load the data
-        //let mut d_all = Data::new();
+
         let ret = Population{trees:Vec::new(),
                              str_rep:HashMap::new(),
+
+                             rescore:match config.get_string("rescore") {
+                                 Some(x) =>
+                                 // A string.  Must be valid usize.  If it is 0 then false 
+                                     if x.parse::<usize>().unwrap() == 1 {
+                                         true
+                                     }else if x.parse::<usize>().unwrap() == 0 {
+                                         false
+                                     }else{
+                                         panic!("Invalid rescore: {}", x)
+                                     },
+                                 // Default
+                                 None => false,
+                             },
+                                 
+                             filter:config.get_usize("filter").unwrap_or(0),
                              mode:match config.get_string("mode").unwrap().as_str(){
                                  "Create" => Mode::Create,
                                  "Resume" => Mode::Resume,
@@ -72,8 +91,6 @@ impl<'a> Population<'a> {
                              max_population:config.get_usize("max_population").unwrap(),
                              mutate_prob:config.get_usize("mutate_prob").unwrap(),
                              copy_prob:config.get_usize("copy_prob").unwrap(),
-                             best_id:0, best_individual:"".to_string(),
-                             model_data_file:config.get_string("model_data_file").unwrap(),
                              classification_file:config.get_string("classification_file").unwrap(),
                              
         };
@@ -92,8 +109,6 @@ impl<'a> Population<'a> {
         }
     }        
     pub fn initialise(&mut self){
-
-
         match  self.mode {
              Mode::Create => {
                  loop {
@@ -108,7 +123,6 @@ impl<'a> Population<'a> {
         }
     }
 
-
     // FIXME The mode should be stored outside the population
     pub fn do_classify(&self) -> bool {
         match self.mode {
@@ -116,6 +130,7 @@ impl<'a> Population<'a> {
             _ => false,
         }
     }
+
     pub fn do_train(&self) -> bool {
         match self.mode {
             Mode::Run => false,
@@ -138,8 +153,7 @@ impl<'a> Population<'a> {
 
     fn classify(&self, case:&Vec<f64>) -> String {
         // Classify a case using the population.  @param `case` is
-        // the case to classify.  The data is pased as it contains
-        // the column headers therefore case names
+        // the case to classify.  
 
         // Create the input structure
         let mut input = Inputs::new();
@@ -199,47 +213,6 @@ impl<'a> Population<'a> {
 
     }
     
-    fn check_peek(&mut self, generation:usize){
-        let best_idx = self.best_idx();
-        let _best_id = self.trees[best_idx].0;
-        let _c1 = &self.trees.iter().nth(best_idx).unwrap().2.class.clone();//
-        if _best_id != self.best_id {
-            self.best_id = _best_id;
-            let this_individual = self.get_tree_id(self.best_id).1.to_string().clone();
-            if this_individual != self.best_individual {
-                let sc = &self.trees[best_idx].2.special;
-
-                // // FIXME There must be a better way
-                // let class = self.trees.iter().nth(best_idx).unwrap().2.class.clone().unwrap();
-                
-                // let sc = score_individual(&t.1,
-                //                           &class,
-                //                           &self.d_all, false);
-
-                self.best_individual = this_individual.clone();
-                println!("G {} ID: {} Score {}\n{}\n",
-                         generation,
-                         self.trees[best_idx].0,
-                         sc,
-                         self.trees[best_idx].1.to_pretty_string(0));
-
-                // Best tree
-                let ref n = self.trees[best_idx].1;
-
-                // ID to lable it
-                let lable = self.trees[best_idx].0;
-
-                // Store its data
-                //let class = &self.trees[best_idx].2.class.unwrap().clone();
-                let c1 = &self.trees.iter().nth(best_idx).unwrap().2.class.clone();//
-                let class = c1.clone();
-                let simulation = simulate(&n, &class[..], &self.d_all);
-                add_simulation(simulation, lable,
-                               self.model_data_file.as_str());
-            }
-        }
-    }
-
     fn check(&self) -> bool {
         let mut ret = true;
         for i in self.trees.iter() {
@@ -400,8 +373,6 @@ impl<'a> Population<'a> {
         println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
         self.bnd_rec.buffer.flush().unwrap(); 
 
-        self.check_peek(generation);
-
         // Write out a record of all scores to do statistical analysis to help with debugging
         let mut scores:Vec<f64> = Vec::new();
         for i in 0..self.trees.len() {
@@ -468,8 +439,8 @@ impl<'a> Population<'a> {
                     &format!("RIP {} culled", id)
                 );
             }
-            
         }
+            
         self.trees = z;
         // Sort population by score, descending so the best are
         // earliest.  Allows the worst individuals to be easilly
@@ -739,37 +710,96 @@ impl<'a> Population<'a> {
             classification_recorder.write_line(format!("Class: {}  Classification: {}", c, s).as_str());
         }        
     }
-
-    pub fn restore_trees(&self) -> Vec<Tree> {
+        
+        pub fn restore_trees(&self) -> Vec<Tree> {
         // Read in saved state from a file, build a population from
         // it, and return the population
         let f = File::open(&self.save_file).unwrap();
         let buf = BufReader::new(f);
         let mut max_id = 1;
-        
+
         let mut trees:Vec<Tree> = Vec::new();
         for line in buf.lines() {
             match line {
                 Ok(l) => {
-                    let start = &l[0..4]; // "Node"
-                    if start == "Node" {
-                        let node = NodeBox::new(Node::new_from_string(&l[4..]));
-                        let sc = score_individual(&node, &self.d_all, true);
-                        let tree = (max_id, node, sc);
-                        trees.push(tree);
-                        max_id += 1;
+                    let start = &l[0..5]; // Class
+                    let class:String;
+                    if start == "Class" {
+                        let n = l.find("Score").unwrap();//expect(panic!("Badly formatted line: {}", l));
+                        class = l[5..n].to_string();
+                        if &l[n..(n+5)] == "Score" {
+                            
+                            let m = l.find("Node").unwrap();
+                            let score_str = &l[(n+5)..m];
+                            let score = score_str.parse::<f64>().unwrap();
+
+                            let node = NodeBox::new(Node::new_from_string(&l[m+4..]));
+                            let sc = if self.rescore {
+                                // Reevaluate the trees against the
+                                // test part of the data
+                                let _sc = score_individual(&node, &self.d_all, true);
+                                println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.special);
+                                _sc
+                                    
+                            }else{
+                                // Use the saved scores
+                                Score{class:class, special:score}
+                            };
+                            let tree = (max_id, node, sc);
+                            trees.push(tree);
+                            max_id += 1;
+                        }
                     }
                 },
                 Err(e) => panic!(e)
             }
         }
+        if self.filter > 0 {
+            // Only have best self.filter trees of each class
+
+            // First sort trees by score
+            trees.sort_by(|a, b|{
+                let a1 = &a.2;
+                let b1 = &b.2;
+                b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
+            });
+
+            // Build the structure that will hold the trees
+            let mut class_trees:HashMap<String,  Vec<Tree>> = HashMap::new();
+            for z in self.get_classes() {
+                class_trees.insert(z.clone(), Vec::new());
+            }
+
+            // Put trees into classes
+            for t in trees.iter() {
+                let c = t.2.class.clone();
+                if class_trees.get(&c).unwrap().len() < self.filter {
+                    // FIXME How do I avoid all this copying
+                    class_trees.get_mut(&c).unwrap().push((t.0, t.1.copy(), t.2.copy()));
+                }
+            }
+
+            // Reinitialise trees and check that there are enough
+            // trees on the way
+            trees.clear();
+            for ct in class_trees.keys() {
+                if class_trees.get(ct).unwrap().len() < self.filter {
+                    eprintln!("Too few trees for class {} Have {} want {}",
+                              ct, class_trees.get(ct).unwrap().len(), self.filter);
+                }
+                for t in class_trees.get(ct).unwrap() {
+                    // FIXME How do I avoid all this copying
+                    trees.push((t.0, t.1.copy(), t.2.copy()));
+                }
+            }
+        }                
         trees
     }
     pub fn save_trees(&self){
         let mut state = String::new();
         for i in 0..self.trees.len() {
             let t = &self.trees[i];
-            state += &format!("Node{}\n", t.1.to_string());
+            state += &format!("Class{}Score{}Node{}\n", t.2.class, t.2.special,t.1.to_string());
         }
         
         let mut buf = BufWriter::new(File::create(&self.save_file).unwrap());
