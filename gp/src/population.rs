@@ -42,7 +42,6 @@ pub struct Population<'a> {
     copy_prob:usize,
     save_file:String,
     classification_file:String,
-    input_names:Vec<String>,
     max_population:usize,
     mode:Mode,
 
@@ -57,44 +56,85 @@ pub struct Population<'a> {
 impl<'a> Population<'a> {
     pub fn new(config:&Config, d_all:&'a Data, bnd_rec:Recorder) -> Population<'a> {
         // Load the data
+        let mut classification_file = "".to_string();
+        let mut copy_prob = 0;
+        let mut crossover_percent = 0;
+        let mut max_population = 0;
+        let mut filter = 0; // Number of rules to use
+        let mut rescore = false; // Set => rescore rules on resume
+        let mut mutate_prob = 0;
+        let str_rep:HashMap<String, bool> =  HashMap::new();
+        let trees:Vec<Tree> = Vec::new();
 
-        let ret = Population{trees:Vec::new(),
-                             str_rep:HashMap::new(),
+        //  Variables all modes have in common
+        let mode:Mode;
+        let bnd_rec = bnd_rec;
+        let save_file = config.get_string("save_file").unwrap();
+        let d_all = d_all;
+        let maxid = 0;
 
-                             rescore:match config.get_string("rescore") {
-                                 Some(x) =>
-                                 // A string.  Must be valid usize.  If it is 0 then false 
-                                     if x.parse::<usize>().unwrap() == 1 {
-                                         true
-                                     }else if x.parse::<usize>().unwrap() == 0 {
-                                         false
-                                     }else{
-                                         panic!("Invalid rescore: {}", x)
-                                     },
-                                 // Default
-                                 None => false,
-                             },
-                                 
-                             filter:config.get_usize("filter").unwrap_or(0),
-                             mode:match config.get_string("mode").unwrap().as_str(){
-                                 "Create" => Mode::Create,
-                                 "Resume" => Mode::Resume,
-                                 "Run" => Mode::Run,
-                                 x => panic!("{}", x),
-                             },
-                             input_names:d_all.input_names.clone(),
-                             maxid:0,
-                             save_file:config.get_string("save_file").unwrap(),
-                             bnd_rec:bnd_rec,
-                             crossover_percent:config.get_usize("crossover_percent").unwrap(),
-                             d_all:d_all,
-                             max_population:config.get_usize("max_population").unwrap(),
-                             mutate_prob:config.get_usize("mutate_prob").unwrap(),
-                             copy_prob:config.get_usize("copy_prob").unwrap(),
-                             classification_file:config.get_string("classification_file").unwrap(),
-                             
+        
+        // First get the mode of the run
+        match config.get_string("mode").unwrap().as_str(){
+            "Create" => {
+                copy_prob = config.get_usize("copy_prob").unwrap();
+                crossover_percent = config.get_usize("crossover_percent").unwrap();
+                max_population = config.get_usize("max_population").unwrap();
+                mode = Mode::Create;
+                mutate_prob = config.get_usize("mutate_prob").unwrap();
+            },
+            "Resume" => {
+                copy_prob = config.get_usize("copy_prob").unwrap();
+                crossover_percent = config.get_usize("crossover_percent").unwrap();
+                filter = config.get_usize("filter").unwrap_or(0);
+                max_population = config.get_usize("max_population").unwrap();
+                mode = Mode::Resume;
+                mutate_prob = config.get_usize("mutate_prob").unwrap();
+                rescore =  match config.get_string("rescore") {
+                    Some(x) =>
+                    // A string.  Must be valid usize.  If it is 0 then false 
+                        if x.parse::<usize>().unwrap() == 1 {
+                            true
+                        }else if x.parse::<usize>().unwrap() == 0 {
+                            false
+                        }else{
+                            panic!("Invalid rescore: {}", x)
+                        },
+                    None => false // Default
+                }
+            },
+            "Run" => {
+                classification_file = config.get_string("classification_file").unwrap();                
+                filter = config.get_usize("filter").unwrap_or(0);
+                mode = Mode::Run;
+            },
+            x => panic!("{}", x),
         };
-        ret
+        // Declare the members of the population
+        Population{
+                   trees,
+                   str_rep,
+                   maxid,
+
+                   bnd_rec,
+
+                   d_all,
+                   crossover_percent,
+                   mutate_prob,
+                   copy_prob,
+                   save_file,
+                   classification_file,
+                   max_population,
+                   mode,
+
+                   // If non 0 pick best 'filter' rules
+                   filter,
+
+                   // If set then then when reading in trees reclassify them with
+                   // score_individual
+                   rescore,
+                   
+        }
     }
 
     fn initialise_rand(&mut self){
@@ -110,15 +150,15 @@ impl<'a> Population<'a> {
     }        
     pub fn initialise(&mut self){
         match  self.mode {
-             Mode::Create => {
-                 loop {
-                     self.initialise_rand();
-                     self.cull_sort();
-                     if self.len() > 0 {
-                         break;
-                     }
-                 }
-             },
+            Mode::Create => {
+                loop {
+                    self.initialise_rand();
+                    self.cull_sort();
+                    if self.len() > 0 {
+                        break;
+                    }
+                }
+            },
             _ => self.trees = self.restore_trees(),
         }
     }
@@ -290,7 +330,7 @@ impl<'a> Population<'a> {
                 self.str_rep.insert(st, true);
                 let nbstr = (*nb).to_string();
                 self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
-                                                l, r, id, &sc.special, nbstr));
+                                                 l, r, id, &sc.special, nbstr));
                 self.trees.push((id, nb, sc));
             }else{
                 // Child was not unique
@@ -368,7 +408,7 @@ impl<'a> Population<'a> {
         }
         if flag {
             // Sort again as we added new individuals
-            self.cull_sort(); // Fixme.  'cull' could be a pipe line.  Take a vector of trees and return a vector of trees
+            self.cull_sort(); 
         }
         println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
         self.bnd_rec.buffer.flush().unwrap(); 
@@ -396,28 +436,29 @@ impl<'a> Population<'a> {
         if ! self.check() {
             panic!("Check failed");
         }
+
         self.save_trees();
     }
 
-    fn _unique_node(&self) -> NodeBox {
-        // Generate a node and check if it is unique
-        
-        let n:NodeBox;
-        loop {
+    // fn _unique_node(&self) -> NodeBox {
+    //     // Generate a node and check if it is unique
+    
+    //     let n:NodeBox;
+    //     loop {
 
-            // Make a node
-            let _n = Box::new(Node::new(&self.d_all.input_names, 0));
+    //         // Make a node
+    //         let _n = Box::new(Node::new(&self.d_all.input_names, 0));
 
-            // Check for uniqueness
-            let st = _n.to_string();
-            if !self.str_rep.contains_key(st.as_str()) {
-                // Is unique
-                n = _n;
-                break;
-            }
-        }
-        n
-    }        
+    //         // Check for uniqueness
+    //         let st = _n.to_string();
+    //         if !self.str_rep.contains_key(st.as_str()) {
+    //             // Is unique
+    //             n = _n;
+    //             break;
+    //         }
+    //     }
+    //     n
+    // }        
     
     // pub fn new_individual(&self) -> Tree {
     //     // Create a random tree and return it
@@ -440,16 +481,28 @@ impl<'a> Population<'a> {
                 );
             }
         }
-            
+        
         self.trees = z;
-        // Sort population by score, descending so the best are
+        // Sort population by score then length, descending so the best are
         // earliest.  Allows the worst individuals to be easilly
         // pop'd off the end
-        &self.trees[..].sort_by(|a,b| {
-            let a2 = &a.2;
-            let b2 = &b.2;
-            b2.partial_cmp(a2).unwrap_or(Ordering::Equal)
+        &self.trees.sort_by(|a, b|{
+            let a1 = &a.2;
+            let b1 = &b.2;
+            match b1.partial_cmp(a1) {
+                Some(x) => match x {
+                    Ordering::Equal => a.1.count_nodes().cmp(&b.1.count_nodes()),
+                    Ordering::Greater => Ordering::Greater,
+                    Ordering::Less => Ordering::Less,
+                },
+                None => panic!("Cannot compare {:?} and {:?}", a1, b1)
+            }
         });
+        // &self.trees[..].sort_by(|a,b| {
+        //     let a2 = &a.2;
+        //     let b2 = &b.2;
+        //     b2.partial_cmp(a2).unwrap_or(Ordering::Equal)
+        // });
         // self.trees =
         //  self.trees.into_iter().filter(|x| {
         //     if !x.2.is_finite() {
@@ -489,7 +542,7 @@ impl<'a> Population<'a> {
         let test = class.clone();
         self.trees.iter().filter(|t| t.2.class == test).collect()
     }
-        
+    
     #[allow(dead_code)]
     fn get_classes(&self) -> &Vec<String>{
         // Return all known class lables
@@ -538,7 +591,7 @@ impl<'a> Population<'a> {
                 None => {
                     // This should not happen
                     panic!("Could not select individual acc: {} sel: {} total_score: {}",
-                             acc, sel, total_score)
+                           acc, sel, total_score)
                 },
             }
         }
@@ -633,7 +686,7 @@ impl<'a> Population<'a> {
             }else{
                 // i is not terminal
                 let mut ret = i.copy();
-                let child = Node::new(&self.input_names, 0);
+                let child = Node::new(&self.d_all.input_names, 0);
                 // Select which branch
                 let selector = rng::gen_range(0, nc-1);
                 if selector < lnc {
@@ -707,14 +760,14 @@ impl<'a> Population<'a> {
             let ref r = self.d_all.data[*i];
             let s = self.classify(r);
             let c = self.d_all.get_class(*i);
-            classification_recorder.write_line(format!("Class: {}  Classification: {}", c, s).as_str());
+            classification_recorder.write_line(format!("Input: {:?} Class: {}  Classification: {}",r, c, s).as_str());
         }        
     }
-        
-        pub fn restore_trees(&self) -> Vec<Tree> {
+    
+    fn restore_trees(&self) -> Vec<Tree> {
         // Read in saved state from a file, build a population from
         // it, and return the population
-        let f = File::open(&self.save_file).unwrap();
+        let f = File::open(&self.save_file).expect(format!("Cannot open {}", &self.save_file).as_str());
         let buf = BufReader::new(f);
         let mut max_id = 1;
 
@@ -738,7 +791,7 @@ impl<'a> Population<'a> {
                                 // Reevaluate the trees against the
                                 // test part of the data
                                 let _sc = score_individual(&node, &self.d_all, true);
-                                println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.special);
+                                //println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.special);
                                 _sc
                                     
                             }else{
@@ -757,11 +810,18 @@ impl<'a> Population<'a> {
         if self.filter > 0 {
             // Only have best self.filter trees of each class
 
-            // First sort trees by score
+            // First sort trees by score and length
             trees.sort_by(|a, b|{
-                let a1 = &a.2;
-                let b1 = &b.2;
-                b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
+                let a1 = &a.2.special;
+                let b1 = &b.2.special;
+                match b1.partial_cmp(a1) {
+                    Some(x) => match x {
+                        Ordering::Equal => a.1.count_nodes().cmp(&b.1.count_nodes()),
+                        Ordering::Greater => Ordering::Greater,
+                        Ordering::Less => Ordering::Less,
+                    },
+                    None => panic!("Cannot compare {} and {}", a1, b1)
+                }
             });
 
             // Build the structure that will hold the trees
@@ -775,6 +835,7 @@ impl<'a> Population<'a> {
                 let c = t.2.class.clone();
                 if class_trees.get(&c).unwrap().len() < self.filter {
                     // FIXME How do I avoid all this copying
+                    //println!("Adding tree: {}", t.1.to_string());
                     class_trees.get_mut(&c).unwrap().push((t.0, t.1.copy(), t.2.copy()));
                 }
             }
