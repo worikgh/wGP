@@ -46,19 +46,6 @@ impl fmt::Display for TerminalType {
     }
 }
 
-// The operations that are implemented
-#[derive(Debug)]
-enum Operator {
-    Add,  
-    Log,  
-    Multiply,
-    Invert, // ??! Invert 0.0?
-    Negate,
-    If,
-    Gt, // >
-    Lt, // <
-    Terminal(TerminalType),
-}
 use node::NodeBox;
 //use node::Node;
 #[cfg(test)]
@@ -236,7 +223,7 @@ fn main() {
     let bnd_recorder = Recorder::new(birthsanddeaths_file.as_str());
     let mut population = Population::new(&config, &data, bnd_recorder);
     population.initialise();
-    println!("Created initial population {}", population.len());
+    println!("Initial population {}", population.len());
 
     // Write the header for the generaion file
     let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
