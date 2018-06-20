@@ -3,9 +3,24 @@
 pub type NodeBox = Box<Node>;
 use rng;
 use std;
-use super::Operator;
+//use super::Operator;
 use super::TerminalType;
 use inputs::Inputs;
+
+// The operations that are implemented
+#[derive(Debug)]
+enum Operator {
+    Add,  
+    Log,  
+    Multiply,
+    Invert, // ??! Invert 0.0?
+    Negate,
+    If,
+    Gt, // >
+    Lt, // <
+    Remainder, // %
+    Terminal(TerminalType),
+}
 
 #[derive(Debug)]
 pub struct Node {
@@ -33,6 +48,7 @@ impl Node {
             "Negate" => Operator::Negate,
             "If" => Operator::If,
             "Gt" => Operator::Gt,
+            "Remainder" => Operator::Remainder,
             "Lt" => Operator::Lt,
             "Float" =>
             {
@@ -54,7 +70,7 @@ impl Node {
         };
         let r = match operator {
             Operator::Add|Operator::Multiply|Operator::If|
-            Operator::Gt|Operator::Lt =>
+            Operator::Gt|Operator::Remainder|Operator::Lt =>
                 Some(NodeBox::new(Node::new_from_iter(iter))),
             _ => None,
         };
@@ -74,6 +90,8 @@ impl Node {
         let a = if level > maxlevel { 
             0
         }else{
+            //  This controlls ho many input nodes there are
+            //  (probabilistically).  FIXME Make it configurable
             rng::gen_range(0, 18)
         };
 
@@ -107,10 +125,11 @@ impl Node {
             5 => NewNode!(Gt,2),
             6 => NewNode!(Lt,2),
             7 => NewNode!(Add,2),
-            8 => NewNode!(If,3),
+            8 => NewNode!(Remainder,2),
+            9 => NewNode!(If,3),
             _ => {
                 // Input node
-                let n = names.len() - 1; // -1 as last name/column is solution
+                let n = names.len();
                 let b = rng::gen_range(0, n);
                 let s = names[b].clone();
                 Node{o:Operator::Terminal(TerminalType::Inputf64(s)), l:None, r:None, d:None}
@@ -232,6 +251,7 @@ impl Node {
                 Operator::Multiply => Operator::Multiply,
                 Operator::Invert => Operator::Invert,
                 Operator::Negate => Operator::Negate,
+                Operator::Remainder => Operator::Remainder,
                 Operator::If => Operator::If,
                 Operator::Gt => Operator::Gt,
                 Operator::Lt => Operator::Lt,
@@ -286,6 +306,7 @@ impl Node {
         macro_rules! node_to_string2 {
             ($name:ident) => {
                 {
+                    //println!("node_to_string2 {}", $name);
                     ret.push_str(stringify!($name) );
                     ret.push_str(" ");
                     child_to_string!(l);
@@ -314,6 +335,7 @@ impl Node {
             Operator::Gt => node_to_string2!(Gt),
             Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
+            Operator::Remainder => node_to_string2!(Remainder),
             Operator::Log => node_to_string1!(Log),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
@@ -389,6 +411,7 @@ impl Node {
             Operator::Gt => node_to_string2!(Gt),
             Operator::Lt => node_to_string2!(Lt),
             Operator::Negate => node_to_string1!(Negate),
+            Operator::Remainder => node_to_string2!(Remainder),
             Operator::Log => node_to_string1!(Log),
             Operator::Invert => node_to_string1!(Invert),
             Operator::Terminal(ref f) => {
@@ -451,6 +474,11 @@ impl Node {
                 let left = evaluate!(l);
                 let right = evaluate!(r);
                 Some(left+right)
+            },
+            Operator::Remainder => {
+                let left = evaluate!(l);
+                let right = evaluate!(r);
+                Some(left%right)
             },
             Operator::Multiply => {
                 let left = evaluate!(l);
