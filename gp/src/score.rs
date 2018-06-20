@@ -4,6 +4,7 @@ use super::Data;
 use inputs::Inputs;
 use std::cmp::Ordering;
 //use std;
+use super::rng;
 // Scoring a individual is key to evolving a good population of
 // individuals.
 
@@ -96,6 +97,8 @@ pub fn score_individual(
     // Score individual is called once per node.  Classifies it
     // (decides what class it is for) and gives it a rating
 
+    // debugging code
+
     // Get the data to do the evaluation on
     let mut inputs = Inputs::new();
     let index:&Vec<usize>;
@@ -106,7 +109,7 @@ pub fn score_individual(
     }
 
     let mut c:Option<String> = None;
-    let mut best_s = 0.0;
+    let mut best_s = 0.0;// std::f64::MIN;
 
     for  class in d.class_names.iter() {
         // Store each distance from the estimate to the actual value
@@ -139,29 +142,40 @@ pub fn score_individual(
 
             // Get the estimate
             let e = node.evaluate(&inputs).unwrap();
+            
 
             // Score: See ExperimentalResults.tex for explanation of
             // the loss function
-            y_d.push(loss_function(t, e));
+            let l = loss_function(t, e);
+            y_d.push(l);
         }
         let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
-        if !s.is_finite() || s < 0.0 { s = 0.0 }
-
-        // The score must be increasing with quality.  The above is a
-        // quantity to minimise.  Cannot use a direct inverse as a
-        // zero will cause a exception.  Zero is the floor of s
-        s = 1.0/(1.0+s);
-        
-        if s >= best_s {
-            c = Some(class.clone());
-            best_s = s;
+        if s.is_finite() {
+            // The score must finite and be increasing with quality.
+            // The above is a quantity to minimise.  Cannot use a
+            // direct inverse as a zero will cause a exception.  Zero
+            // is the floor of s
+            s = 1.0/(1.0+s);
+            
+            if s >= best_s {
+                c = Some(class.clone());
+                best_s = s;
+            }
         }
     }
+    let _c = match c{
+        Some(c) => c,
+        None => {
+            let n = rng::gen_range(0, d.class_names.len());
+            d.class_names.iter().nth(n).unwrap().to_string()
+        }
+    };
 
+    //println!("Node: {} Score: {} Class: {}", node.to_string(), best_s, _c);
     Score{special:best_s,
           // FIXME This should be a reference with a life time.  This
           // string should be in population.class_names only
-          class:c.unwrap()
+          class:_c,
     }
 }
 
