@@ -19,12 +19,13 @@ if(is.na(input)){
     input <- "TestInput.txt"
 }
 
-data <- read.table(input)
-
+data <- readLines(input)
 ## Get rid of first column (done here as in the future that field will
 ## be eliminated and when that happens only this line needs to be
 ## changed
-data <- data[, -1]
+data <- sapply(data, function(x){sub("^.+ Class: ", "Class: ", x, perl=TRUE)}, USE.NAMES = FALSE)
+data <- sapply(data, function(x){strsplit(x, '\\s+', perl=TRUE)}, USE.NAMES = FALSE)
+data <- data.frame(matrix(unlist(data), nrow=length(data), byrow=T))
 
 ## The first column is constand "Class:" so eliminate it
 data <- data[, -1]
@@ -46,14 +47,27 @@ stopifnot(ncol(data) %% 2 == 1 )
 ## Counters for correct classifications and incorrect
 correct <- 0
 failed <- 0
+c.rat <- c();
+f.rat <- c()
 
 for (i in 1:nrow(data)){
     row = data[i,]
+    rat <- as.numeric(row[,3])/(as.numeric(row[,3])+as.numeric(row[,5]))
     if(row[,1] == row[,2]){
         correct <- correct + 1
+        c.rat <- c(c.rat, rat)
     }else{
         failed <-  failed + 1
+        f.rat <- c(f.rat, rat)
     }
+}
+
+Levels <- levels(data[,1])
+for(l in Levels){
+    l1 <- data[data[,1] == l,]
+    l2 <- l1[l1[,2] == l,] # Corect
+    l3 <- l1[l1[,2] != l,] # Incorect
+    print(sprintf("%s False positive: %0.2f%%",l, 100*nrow(l3)/(nrow(l2)+nrow(l3))))
 }
 paste("Correct: ",correct)
 paste("Failed: ",failed)
