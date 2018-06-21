@@ -1,4 +1,5 @@
 #[macro_use] extern crate lazy_static;
+extern crate fs2;
 extern crate rand;
 extern crate statistical;
 
@@ -20,7 +21,6 @@ use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
-
 use std::time::SystemTime;
 
 // The type of data that can be a terminal
@@ -55,7 +55,7 @@ mod tests {
     fn test_data_partition() {
         let config = Config::new("config");
         let data_file = config.get_string("data_file").unwrap();
-
+        
         // Load the data
         let mut d_all:Data = Data::new();
         d_all.read_data(data_file.as_str(), 0);
