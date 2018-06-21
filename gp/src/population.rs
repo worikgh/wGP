@@ -3,6 +3,7 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
+use fs2::FileExt;
 use inputs::Inputs;
 use score::Score;
 use std::cmp::Ordering;
@@ -767,11 +768,14 @@ impl<'a> Population<'a> {
     fn restore_trees(&self) -> Vec<Tree> {
         // Read in saved state from a file, build a population from
         // it, and return the population
-        let f = File::open(&self.save_file).expect(format!("Cannot open {}", &self.save_file).as_str());
-        let buf = BufReader::new(f);
-        let mut max_id = 1;
 
+        let mut max_id = 1;
         let mut trees:Vec<Tree> = Vec::new();
+
+        let file = File::open(&self.save_file).expect(format!("Cannot open {}", &self.save_file).as_str());
+        file.lock_exclusive().expect("Failed to lock save file");
+        let buf = BufReader::new(file);
+
         for line in buf.lines() {
             match line {
                 Ok(l) => {
@@ -862,8 +866,11 @@ impl<'a> Population<'a> {
             let t = &self.trees[i];
             state += &format!("Class{}Score{}Node{}\n", t.2.class, t.2.special,t.1.to_string());
         }
-        
-        let mut buf = BufWriter::new(File::create(&self.save_file).unwrap());
+
+        let file = File::create(&self.save_file).unwrap();
+        file.lock_exclusive().expect("Failed to lock save file");
+
+        let mut buf = BufWriter::new(file);
         buf.write(&state.into_bytes()[..]).unwrap();
 
         
