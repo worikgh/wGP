@@ -1,0 +1,58 @@
+#!/usr/bin/perl -w
+use strict;
+
+
+# Control classifiers
+
+# The executable Genetic Programming engine
+
+my $GP = `pwd`;
+chomp $GP;
+$GP .= "/target/release/gp";
+
+# Each run is controlled using arguments made in this file
+use constant CONFIG => ".gp_config";
+
+# Each simulation is run in a directory with a configuration file
+# passed as the only argument.  There is a data file in that directory
+# (named in the configuration file) and a R script to create the data
+# file.  The CONFIG file in the starting directory for this programme
+# is included in all other configuration files.
+
+sub read_cfg() {
+    my %ret = ();
+    open(my $cfg, CONFIG) or die "$!";
+    if($cfg){
+        my %a = 
+            map{chomp; /^\s*(\S+)\s+(.+)$/ or die $_; $1 => $2}
+        grep{/\S\s+\S/} 
+        grep{/^\s*[^#]/}
+        <$cfg>;
+        %ret = %a;
+    }
+    return %ret;
+}
+
+my %DEFAULT_CONFIG = read_cfg();
+
+# First argument is the name of the directory that e run in
+my $name = shift;
+
+print "Running in $name\n";
+
+chdir $name or die "$!: Could not chdir $name";
+
+# Get the local configuration
+my %local_config = read_cfg();
+
+# local_config has precedence over configuration files
+my %config = %DEFAULT_CONFIG;
+map{$config{$_} = $local_config{$_}}keys %local_config;
+
+open(my $o_cfg, ">config") or die "$!";
+foreach my $key (sort keys %config){
+    print $o_cfg "$key $config{$key}\n";
+}
+
+my $cmd = $GP." config";
+print `$cmd`."\n";
