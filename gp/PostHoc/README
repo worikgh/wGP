@@ -1,2 +1,7 @@
 PostHoc is a directory for programmes that analyse the results of a
 simulation
+
+Classifiers.R: Read in the results of running `classify_test` and
+               report on the quality of the classifiers.  Pass as
+               argument the path to the *_Classes.txt produced with
+               "mode Run"
