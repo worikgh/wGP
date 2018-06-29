@@ -5,7 +5,7 @@ use std::io::BufReader;
 use std::io::prelude::*;
 
 pub struct Config {
-    data:HashMap<String, String>,
+    pub data:HashMap<String, String>,
 }
 
 impl Config {

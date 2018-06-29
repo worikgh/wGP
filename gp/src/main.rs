@@ -2,7 +2,8 @@
 extern crate fs2;
 extern crate rand;
 extern crate statistical;
-
+extern crate ncurses;
+mod front_end;
 mod config;
 mod data;
 mod inputs;
@@ -22,7 +23,7 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
-
+use front_end::FrontEnd;
 // The type of data that can be a terminal
 #[derive(Debug)]
 enum TerminalType {
@@ -188,72 +189,68 @@ impl Recorder {
 }
 
 fn main() {
-    println!("Start");
-
+    //println!("Start");
     // Get configuration file.  Will use file names 'config' if no
     // file name provided as a argument FIXME:  Don't have a default!!!
+
     let args: Vec<_> = env::args().collect();
     let cfg_file:String;
-    if args.len() > 1 {
-        cfg_file = args[1].clone();
+    println!("args.len() {}", args.len() );
+    if args.len() == 1 {
+        let mut fe = FrontEnd::new();
+        fe.fe_start();
     }else{
-        cfg_file = "config".to_string();
-    }
-    let config = Config::new(cfg_file.as_str());
+        cfg_file = args[1].clone();
 
-    // Load configuration data
-    let generations_file = config.get_string("generations_file").unwrap();
-    let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
-    let num_generations = config.get_usize("num_generations").unwrap();
-    let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
-    let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
-    let data_file = config.get_string("data_file").unwrap() ;
-    let training_percent = config.get_usize("training_percent").unwrap();
-    
-    // Set up output file to record each generation:  FIXME move this to population
-    let mut generation_recorder = Recorder::new(generations_file.as_str());
+        let config = Config::new(cfg_file.as_str());
 
-
-    // The source of entropy.  
-    rng::reseed(seed.as_slice());
-
-    // Create a population. 
-    println!("Population start");
-    let data = Data::new(&data_file, training_percent);
-    let bnd_recorder = Recorder::new(birthsanddeaths_file.as_str());
-    let mut population = Population::new(&config, &data, bnd_recorder);
-    population.initialise();
-    println!("Initial population {}", population.len());
-
-    // Write the header for the generaion file
-    let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-    generation_recorder.write_line(&s[..]);
-    generation_recorder.buffer.flush().unwrap();
-
-    if population.do_train() {
-
-
-
-        for generation in 0..num_generations {
-            // Main loop
-            
-            population.new_generation(generation);
-            let s = format!("{} {} {} {} {}",
-                            generation,
-                            population.best_id(),
-                            population.best_score().special,
-                            population.len(),
-                            population.get_tree_id(population.best_id()).1.to_string());
-            generation_recorder.write_line(&s[..]);
-            generation_recorder.buffer.flush().unwrap();
-        }
-    }
-
-    if population.do_classify() {
-        // Do classification
-        population.classify_test();
-    }
-    println!("Bye!");
+        // Load configuration data
+        let num_generations = config.get_usize("num_generations").unwrap();
+        let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
+        let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
+        let data_file = config.get_string("data_file").unwrap() ;
+        let training_percent = config.get_usize("training_percent").unwrap();
         
-}
+        // Set up output file to record each generation:  FIXME move this to population
+        let generations_file = config.get_string("generations_file").unwrap();
+        let mut generation_recorder = Recorder::new(generations_file.as_str());
 
+
+        // The source of entropy.  
+        rng::reseed(seed.as_slice());
+
+        // Create a population. 
+        let data = Data::new(&data_file, training_percent);
+        let mut population = Population::new(&config, &data);
+        population.initialise();
+
+        // Write the header for the generaion file
+        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
+
+        if population.do_train() {
+
+            for generation in 0..num_generations {
+                // Main loop
+                
+                population.new_generation(generation);
+                let s = format!("{} {} {} {} {}",
+                                generation,
+                                population.best_id(),
+                                population.best_score().special,
+                                population.len(),
+                                population.get_tree_id(population.best_id()).1.to_string());
+                generation_recorder.write_line(&s[..]);
+                generation_recorder.buffer.flush().unwrap();
+            }
+        }
+
+        if population.do_classify() {
+            // Do classification
+            population.classify_test();
+        }
+        //println!("Bye!");
+        
+    }
+}

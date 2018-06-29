@@ -3,6 +3,11 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
+use std::path::PathBuf;
+use std::path::Path;
+use std::env;
+use std::thread;
+use std::sync::{Mutex, Arc};
 use fs2::FileExt;
 use inputs::Inputs;
 use score::Score;
@@ -52,11 +57,99 @@ pub struct Population<'a> {
     // If set then then when reading in trees reclassify them with
     // score_individual
     rescore:bool, 
+
+    // Path to the root directory of the simulation
+    root_dir:String,
 }
 
 impl<'a> Population<'a> {
-    pub fn new(config:&Config, d_all:&'a Data, bnd_rec:Recorder) -> Population<'a> {
+    fn make_fn(&self, f_n:String) -> String {
+        let mut ret = self.root_dir.clone();
+        ret.push_str(f_n.as_str());
+        ret
+    }
+    pub fn new_sub_thread(config:Config, a:Arc<Mutex<PopulationStatus>>) -> thread::JoinHandle<()>{
+        thread::spawn(move || {
+            
+            let training_percent = config.get_usize("training_percent").unwrap();
+
+            // FIXME This is repeated in Population::new
+            let mut root_dir = config.get_string("root_dir").unwrap();
+            root_dir.push('/');
+            root_dir.push_str("Data/");
+            root_dir.push_str(config.get_string("name").unwrap().as_str());
+            root_dir.push('/');
+
+            let mut data_dir = root_dir.clone(); 
+            data_dir.push_str(config.get_string("data_file").unwrap().as_str());
+
+            let d_all = Data::new(&data_dir, training_percent);
+
+            let mut population = Population::new(&config, &d_all);
+            population.initialise();
+
+            let mut generations_file = root_dir.clone();
+            generations_file.push_str(config.get_string("generations_file").unwrap().as_str());
+            let mut generation_recorder = Recorder::new(&generations_file);
+            if population.do_train() {
+                eprintln!("Got to here population train");
+                let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
+                let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
+
+                // The source of entropy.  
+                rng::reseed(seed.as_slice());
+
+                let num_generations = config.get_usize("num_generations").unwrap();
+                // Write the header for the generaion file
+                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+                generation_recorder.write_line(&s[..]);
+                generation_recorder.buffer.flush().unwrap();
+
+                for generation in 0..num_generations {
+                    // Main loop
+                    eprintln!("Got to here generation {}", generation);
+
+                    population.new_generation(generation);
+                    eprintln!("Got to here: Created generation");
+                    let s = format!("{} {} {} {} {}",
+                                    generation,
+                                    population.best_id(),
+                                    population.best_score().special,
+                                    population.len(),
+                                    population.get_tree_id(population.best_id()).1.to_string());
+                    generation_recorder.write_line(&s[..]);
+                    generation_recorder.buffer.flush().unwrap();
+                    eprintln!("Got to here: Documented generation");
+
+                    // Update the status structure and check if caller
+                    // has decided to shut this thread don
+                    let mut ps = a.lock().unwrap();
+                    (*ps).generation = generation;
+                    if ps.cleared == false {
+                        // Caller wants us to stop
+                        ps.running = false;
+                        break;
+                    }
+                    eprintln!("Got to here: End generation");
+                }
+            }
+
+            if population.do_classify() {
+                // Do classification
+                population.classify_test();
+            }
+            
+        })
+        
+    }
+    pub fn new(config:&Config, d_all:&'a Data) -> Population<'a> {
         // Load the data
+        let mut root_dir = config.get_string("root_dir").unwrap();
+        root_dir.push('/');
+        root_dir.push_str("Data/");
+        root_dir.push_str(config.get_string("name").unwrap().as_str());
+        root_dir.push('/');
+
         let mut classification_file = "".to_string();
         let mut copy_prob = 0;
         let mut crossover_percent = 0;
@@ -69,7 +162,9 @@ impl<'a> Population<'a> {
 
         //  Variables all modes have in common
         let mode:Mode;
-        let bnd_rec = bnd_rec;
+        let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
+        let bnd_rec  = Recorder::new(birthsanddeaths_file.as_str());
+
         let save_file = config.get_string("save_file").unwrap();
         let d_all = d_all;
         let maxid = 0;
@@ -113,28 +208,29 @@ impl<'a> Population<'a> {
         };
         // Declare the members of the population
         Population{
-                   trees,
-                   str_rep,
-                   maxid,
+            root_dir,
+            trees,
+            str_rep,
+            maxid,
 
-                   bnd_rec,
+            bnd_rec,
 
-                   d_all,
-                   crossover_percent,
-                   mutate_prob,
-                   copy_prob,
-                   save_file,
-                   classification_file,
-                   max_population,
-                   mode,
+            d_all,
+            crossover_percent,
+            mutate_prob,
+            copy_prob,
+            save_file,
+            classification_file,
+            max_population,
+            mode,
 
-                   // If non 0 pick best 'filter' rules
-                   filter,
+            // If non 0 pick best 'filter' rules
+            filter,
 
-                   // If set then then when reading in trees reclassify them with
-                   // score_individual
-                   rescore,
-                   
+            // If set then then when reading in trees reclassify them with
+            // score_individual
+            rescore,
+            
         }
     }
 
@@ -301,7 +397,7 @@ impl<'a> Population<'a> {
 
         // Call every generation
 
-        println!("New generation: {} {}", generation, self.stats());
+        //println!("New generation: {} {}", generation, self.stats());
 
         // Create a new population of trees to replace the old one
         let mut new_trees:Vec<Tree> = Vec::new();
@@ -394,24 +490,24 @@ impl<'a> Population<'a> {
         self.cull_sort();
 
         // Adjust population
-        let mut n1 = 0; // Number of individuals deleted
-        let mut n2 = 0; // Number of individuals added
+        // let mut n1 = 0; // Number of individuals deleted
+        // let mut n2 = 0; // Number of individuals added
         if self.len() > self.max_population {
             while self.len() > self.max_population {
                 let _ = self.delete_worst();
-                n1 += 1;
+                //n1 += 1;
             }
         }
         let flag =  self.len() < self.max_population; // Set if new individuals  to be added
         while self.len() < self.max_population {
             while !self.add_individual() {}
-            n2 += 1;
+            //n2 += 1;
         }
         if flag {
             // Sort again as we added new individuals
             self.cull_sort(); 
         }
-        println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
+        //println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
         self.bnd_rec.buffer.flush().unwrap(); 
 
         // Write out a record of all scores to do statistical analysis to help with debugging
@@ -877,3 +973,11 @@ impl<'a> Population<'a> {
     }
 }    
 
+pub struct PopulationStatus {
+
+    // Front end unsets this to stop simulation gently
+    pub cleared:bool,
+    pub running:bool,
+    pub generation:usize,
+    pub path:PathBuf,
+}
