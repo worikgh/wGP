@@ -3,9 +3,6 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
-use std::path::PathBuf;
-use std::path::Path;
-use std::env;
 use std::thread;
 use std::sync::{Mutex, Arc};
 use fs2::FileExt;
@@ -58,16 +55,12 @@ pub struct Population<'a> {
     // score_individual
     rescore:bool, 
 
-    // Path to the root directory of the simulation
-    root_dir:String,
+    // Path to the root directory of the simulation.  This is a
+    // different root_dir from the one in config.
+    //root_dir:String,
 }
 
 impl<'a> Population<'a> {
-    fn make_fn(&self, f_n:String) -> String {
-        let mut ret = self.root_dir.clone();
-        ret.push_str(f_n.as_str());
-        ret
-    }
     pub fn new_sub_thread(config:Config, a:Arc<Mutex<PopulationStatus>>) -> thread::JoinHandle<()>{
         thread::spawn(move || {
             
@@ -88,9 +81,8 @@ impl<'a> Population<'a> {
             let mut population = Population::new(&config, &d_all);
             population.initialise();
 
-            let mut generations_file = root_dir.clone();
-            generations_file.push_str(config.get_string("generations_file").unwrap().as_str());
-            let mut generation_recorder = Recorder::new(&generations_file);
+            let  generations_file = config.get_string("generations_file").unwrap();//.as_str();
+            let mut generation_recorder = Recorder::new(&generations_file[..]);
             if population.do_train() {
                 eprintln!("Got to here population train");
                 let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
@@ -104,6 +96,12 @@ impl<'a> Population<'a> {
                 let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
                 generation_recorder.write_line(&s[..]);
                 generation_recorder.buffer.flush().unwrap();
+
+                {
+                    // Update status.  We are running
+                    let mut ps = a.lock().unwrap();
+                    (*ps).running = true;
+                }
 
                 for generation in 0..num_generations {
                     // Main loop
@@ -124,8 +122,10 @@ impl<'a> Population<'a> {
                     // Update the status structure and check if caller
                     // has decided to shut this thread don
                     let mut ps = a.lock().unwrap();
+                    eprintln!("Got to here: Got lock");
                     (*ps).generation = generation;
                     if ps.cleared == false {
+                        eprintln!("Got to here: Cleared");
                         // Caller wants us to stop
                         ps.running = false;
                         break;
@@ -164,7 +164,6 @@ impl<'a> Population<'a> {
         let mode:Mode;
         let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
         let bnd_rec  = Recorder::new(birthsanddeaths_file.as_str());
-
         let save_file = config.get_string("save_file").unwrap();
         let d_all = d_all;
         let maxid = 0;
@@ -208,7 +207,6 @@ impl<'a> Population<'a> {
         };
         // Declare the members of the population
         Population{
-            root_dir,
             trees,
             str_rep,
             maxid,
@@ -237,14 +235,17 @@ impl<'a> Population<'a> {
     fn initialise_rand(&mut self){
         // Initialise with a random tree
         loop {
-            // Random individual.  Returns true when a unique
-            // individual is created.
+
+            // Random individual.  'add_individual' returns true when
+            // a unique individual is created.
             while !self.add_individual() {} 
+
             if self.len() == self.max_population {
                 break;
             }
         }
     }        
+
     pub fn initialise(&mut self){
         match  self.mode {
             Mode::Create => {
@@ -979,5 +980,5 @@ pub struct PopulationStatus {
     pub cleared:bool,
     pub running:bool,
     pub generation:usize,
-    pub path:PathBuf,
+    pub path:String, // FIXME This should be a reference
 }
