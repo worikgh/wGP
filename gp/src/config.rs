@@ -3,19 +3,35 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
+use std::env;
+
 
 pub struct Config {
     pub data:HashMap<String, String>,
 }
 
 impl Config {
+    pub fn copy(&self) -> Config {
+        let mut data:HashMap<String, String> = HashMap::new();
+        for k in self.data.keys() {
+            data.insert(k.clone(), self.data.get(k).unwrap().clone());
+        }
+        Config{data:data}
+    }
     pub fn new(cfg_file:&str)-> Config {
         let file = File::open(cfg_file).unwrap();
+        Config::new_file(file)
+    }
+    pub fn new_file(file:File) -> Config {
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
         buf_reader.read_to_string(&mut contents).unwrap();
         let lines = contents.lines();
         let mut config_hm = HashMap::new();
+
+        // Initialise root directory
+        config_hm.insert("root_dir".to_string(), env::current_dir().unwrap().to_str().unwrap().to_string());
+
         for line in lines {
             let mut iter = line.split_whitespace();
             let k = iter.next().unwrap();
