@@ -5,6 +5,7 @@ extern crate statistical;
 extern crate ncurses;
 mod front_end;
 mod config;
+mod config_default;
 mod data;
 mod inputs;
 mod node;
@@ -172,6 +173,7 @@ pub struct Recorder {
 }
 impl Recorder {
     fn new(file_name:&str) -> Recorder {
+        eprintln!("Recorder new. Buffer name: {}", file_name);
         Recorder{
             buffer:BufWriter::new(OpenOptions::new()
                                   .append(true)
