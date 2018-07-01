@@ -1,5 +1,5 @@
 //use data::Data;
-//use std::fs::File;
+use std::fs::File;
 //use std::io::prelude::*;
 //use std::sync::mpsc;
 use config::Config;
@@ -14,6 +14,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, Arc};
 use std::thread;
+use config_default::ConfigDefault;
 
 pub struct FrontEnd {
     handles:HashMap<String, (Arc<Mutex<PopulationStatus>>, thread::JoinHandle<()>)>,
@@ -26,8 +27,12 @@ impl FrontEnd {
                  root_dir:env::current_dir().unwrap().to_str().unwrap().to_string(),
         }
     }
-    fn run_simulation(&mut self, name:&str) -> Result<usize, &str> {
+    fn run_simulation(&mut self, config:Config) -> Result<usize, &str> {
 
+        // Run a simulation.  The config structure has all the
+        // information needed
+
+        let name = config.get_string("name").unwrap();
         // Check not already running
         eprintln!("run_simulation");
         let running = match self.handles.entry(name.to_string()) {
@@ -64,7 +69,7 @@ impl FrontEnd {
                     let mut data:HashMap<String, String> = HashMap::new();
                     let mut work_dir = self.root_dir.clone();
                     work_dir.push_str("/Data/");
-                    work_dir.push_str(name);
+                    work_dir.push_str(name.as_str());
                     work_dir.push('/');
                     data.insert("work_dir".to_string(), work_dir.clone());
                     data.insert("root_dir".to_string(), self.root_dir.clone());
@@ -94,36 +99,73 @@ impl FrontEnd {
             // Create the shared memory to monitor and control simulation
             let mut pb = config.get_string("root_dir").unwrap();
             pb.push_str("/Data/");
-            pb.push_str(name);
+            pb.push_str(name.as_str());
             let bb = Arc::new(Mutex::new(PopulationStatus{running:false, cleared:true, generation:0, path:pb}));
             let h = Population::new_sub_thread(config, bb.clone());
             status_line(&format!("Started thread id {:?}", h.thread().id()));
-            self.handles.insert(String::from(name), (bb, h));
+            self.handles.insert(String::from(name.as_str()), (bb, h));
             Ok(0)
         }else{
             Err("Running already")
         }
     }
-    fn do_project_menu(&mut self, win:WINDOW, project:&String) {
+
+    fn do_project_menu(&mut self, win:WINDOW, name:&String) {
+
+        // For the project named in @param name, offer a menu of
+        // things to do with it
+
         // Get the root directory of the projects
-
-
-        let projects:Vec<_> = vec!["Create It".to_string(), "Resume".to_string(),"Run".to_string(),"Configure".to_string()];
+        let projects:Vec<_> = vec!["Create      ".to_string(), "Resume".to_string(),"Run".to_string(),"Configure".to_string()];
         let actions:Vec<_> = projects.iter().zip(0..projects.len()).collect();
+
+        // Get the cnfiguration data stored in the directory
+
+        // Build a configuration object.  First load default data.
+        // Either in the root_dir/.gp_init or hard coded DefaultConfig
+        let mut config = match File::open(format!("{}.gp_init", self.root_dir)){
+            Ok(f) => Config::new_file(f),
+            Err(_) => ConfigDefault::new(name.as_str()),
+        };
+
+        // Get the local configuration and over write the defaults
+        let cfg_fname = format!("{}Data/{}/.gp_config", self.root_dir, name);
+        eprintln!("cfg_fname {}", cfg_fname);
+
+        if let Ok(f) = File::open(cfg_fname) {
+            let _cfg = Config::new_file(f);
+            for key in _cfg.data.keys() {
+                // Over ride a default
+                let g = _cfg.get_string(&key).unwrap();
+                let v = g.clone();
+                config.data.insert(key.clone(), v).unwrap();
+            }
+        };
         
         loop {
-            let c = make_menu(win, &actions, project.as_str());
+            let c = make_menu(win, &actions, name.as_str());
             status_line(&format!("key: {}",c));
-            if c == 0 {
-                break;
-            }else if c == 1 {
-                // Create
-                match self.run_simulation(project) {
-                    Ok(_) => (), //status_line(&"Set running".to_string()),
+            match c {
+                0 => break,
+                1 => match self.run_simulation(config.copy()) {
+                    Ok(_) => (), 
                     Err(s) => status_line(&s.to_string()),
-                }
+                },
+                4 => {
+                    let _cfg = self.edit_config(win, &config);
+                    for key in _cfg.data.keys() {
+                        // Over ride a default
+                        config.data.insert(key.clone(), _cfg.get_string(&key).unwrap().clone()).unwrap();
+                    }
+                },                    
+                _ => (),
             }
         }
+    }
+    fn edit_config(&self, win:WINDOW, config:&Config) -> Config {
+        werase(win);
+        
+        config.copy()
     }
     fn do_choose_project(&mut self, win:WINDOW) {
 
