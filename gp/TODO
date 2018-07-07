@@ -1,0 +1,24 @@
+TESTS
+
+Visualisation of:
+
+    Results.  How good classifier is
+    Crossover: Ho resources are allocated inside loop
+    Trees: graphviz
+
+Wrapper to write config file and to start simulation
+
+Mechanism to pause a simulation
+
+Mechanism to change parameters during a run (signal?)
+
+Wrapper to monitor a simulation and run classifiers on test data hile
+simulation still running
+
+ADFs.  Very important.
+
+Cataloguing of sub-trees.  Finding building blocks.
+
+Measure of diversity in population.
+
+Quality progress reporting, controlled by run time configuration
