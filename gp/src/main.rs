@@ -2,7 +2,8 @@
 extern crate fs2;
 extern crate rand;
 extern crate statistical;
-extern crate ncurses;
+//extern crate cursive;
+
 mod front_end;
 mod config;
 mod config_default;
