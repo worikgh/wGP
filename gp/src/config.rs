@@ -29,15 +29,15 @@ impl Config {
         let lines = contents.lines();
         let mut config_hm = HashMap::new();
 
-        // Initialise root directory
-        config_hm.insert("root_dir".to_string(), env::current_dir().unwrap().to_str().unwrap().to_string());
-
         for line in lines {
             let mut iter = line.split_whitespace();
-            let k = iter.next().unwrap();
-            let v = iter.map(|x| format!("{} ", x)).collect::<String>();
-            if k != "#" {
-                config_hm.insert(k.to_string(), v.trim().to_string());
+
+            // This will ignore blank lines
+            if let Some(k)  = iter.next() {
+                let v = iter.map(|x| format!("{} ", x)).collect::<String>();
+                if k != "#" {
+                    config_hm.insert(k.to_string(), v.trim().to_string());
+                }
             }
         }
         Config{data:config_hm}
