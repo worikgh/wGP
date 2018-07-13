@@ -1,181 +1,283 @@
-//use population::Population;
-//use std::collections::hash_map::Entry::Occupied;
-//use std::collections::hash_map::Entry::Vacant;
-use std::fs;
-//use std::fs::File;
-use std::path::Path;
+use config::Config;
+use config_default::ConfigDefault;
+use controller::Controller;
+use ncurses::*;
 use std::env;
-
-use cursive::Cursive;
-//use cursive::event::Key;
-use cursive::view::*;
-use cursive::views::*;
-use std::rc::Rc;
-use std::sync::mpsc;
+use std::fs::File;
+use std::fs;
+use std::path::Path;
 
 pub struct FrontEnd {
-    cursive: Cursive,
-    fe_rx: mpsc::Receiver<FrontEndMessage>,
-    fe_tx: mpsc::Sender<FrontEndMessage>,
-    controller_tx: mpsc::Sender<ControllerMessage>,
-}
-
-pub enum FrontEndMessage {
-    UpdateOutput(String),
+    root_dir:String,
+    controller:Controller,
 }
 
 impl FrontEnd {
-    /// Create a new FrontEnd object.  The provided `mpsc` sender will be used
-    /// by the UI to send messages to the controller.
-    pub fn new(controller_tx: mpsc::Sender<ControllerMessage>,
-               root_dir:String,
-    ) -> FrontEnd {
+    pub fn new () -> FrontEnd {
 
-        // Initialise the communication channels
-        let (fe_tx, fe_rx) = mpsc::channel::<FrontEndMessage>();
+        // The root directory of the process.  FIXME This should be
+        // passed in on the command line, optionally
+        let root_dir = format!("{}/", env::current_dir().unwrap().to_str().unwrap().to_string());
         
-
-        let mut fe = FrontEnd {
-            cursive: Cursive::new(),
-            fe_tx: fe_tx,
-            fe_rx: fe_rx,
-            controller_tx: controller_tx,
-        };
-
         
-        // Create a view tree with a SelectView holding all projects
+        FrontEnd{
+            //config:config,
+            controller:Controller::new(root_dir.clone()),
+            root_dir:root_dir,
+        }
+    }
+    
+    fn do_project_menu(&mut self, win:WINDOW, name:&String) {
 
-        // Collect the models
-        let mut proj_dir = root_dir;
-        proj_dir.push_str("/Data/");
+        // For the project named in @param name, offer a menu of
+        // things to do with it
 
-        let proj_dir = Path::new(proj_dir.as_str());
+        let status = self.controller.get_status(&name);
+        status_line(&format!("Cleared: {} Runnning: {} Path: {}", status.cleared, status.running, status.path));
+        // Get the root directory of the projects
+        let projects:Vec<_> = vec!["Create      ".to_string(), "Status".to_string()];
+        let actions:Vec<_> = projects.iter().zip(0..projects.len()).collect();
+        
+        
+        loop {
+            let c = make_menu(win, &actions, name.as_str());
+            status_line(&format!("key: {}",c));
+            match c {
+                0 => break,
+                1 => {
+                    // Build a configuration object.  This is top
+                    // level configuration that can be overridden by
+                    // project configuration First load default data.
+                    // Either in the root_dir/.gp_config or hard coded
+                    // DefaultConfig
+                    let mut config = match File::open(format!("{}.gp_config", self.root_dir)){
+                        Ok(f) => Config::new_file(f),
+                        Err(_) => ConfigDefault::new(name.as_str()),
+                    };
+                    config.data.insert("root_dir".to_string(), self.root_dir.clone());
+                    config.data.insert("name".to_string(), name.to_string());
+                    match self.controller.run_simulation(config.copy()) {
+                        Ok(_) => (), 
+                        Err(s) => status_line(&s.to_string()),
+                    }
+                },
+                2 => {
+                    self.do_project_status(win, name);
+                }
+                _ => (),
+            }
+        }
+    }
+    fn do_project_status(& mut self, win:WINDOW, name:&String){
+        werase(win);
+        let status = self.controller.get_status(&name);
+        // pub cleared:bool,
+        // pub running:bool,
+        // pub generation:usize,
+        // pub path:String, // FIXME This should be a reference
+        if mvwprintw(win, 1, 1, &format!("Name: {}", name)) != 0 {
+            panic!("Failed mvprint");
+        }
+        if mvwprintw(win, 2, 1, &format!("Cleared: {:?}", status.cleared)) != 0 {
+            panic!("Failed mvprint");
+        }
+        if mvwprintw(win, 3, 1, &format!("Running: {:?}", status.running)) != 0 {
+            panic!("Failed mvprint");
+        }
+        if mvwprintw(win, 4, 1, &format!("Generation: {:?}", status.generation)) != 0 {
+            panic!("Failed mvprint");
+        }
+        if mvwprintw(win, 5, 1, &format!("Path: {}", status.path)) != 0 {
+            panic!("Failed mvprint");
+        }
+        redraw(win);
+        wgetch(win);
+    }
+    fn edit_config(&self, win:WINDOW, config:&Config) -> Config {
+        werase(win);
+        
+        config.copy()
+    }
+    fn do_choose_project(&mut self, win:WINDOW) {
+
+        // Get the root directory of the projects
+        let proj_dir = Path::new("./Data/");
+        status_line(&format!("Current Directory {:?}", env::current_dir()));
+
+        // Get the sub-directories that are projects
+        let mut projects:Vec<String> = Vec::new();
         let entries = match fs::read_dir(proj_dir) {
             Ok(v) => v,
             Err(e) => {
+                redraw(win);
                 let s = format!("Failed reading {:?} e: {} cd: {:?}", proj_dir.to_str(), e, env::current_dir());
+                display_model(win, &s);
+                fe_shut();
                 panic!(s);
             }
         };
-        let mut sv = SelectView::<String>::new().with_id("model_list");
         for e in entries {
             let p = e.unwrap().path();
             let md = p.metadata().expect("metadata call failed");
             if md.file_type().is_dir() {
-                // Projects are in sub directories.
+                // Projects are in sub directories
                 let sp = p.file_name().unwrap().to_str().unwrap().to_string();
-                //sv.get_mut().add_item_str(sp);
+                projects.push(sp);
             }
         }
 
+        // Display the projects and wait for user to select one
+        let menu_vec:Vec<_> = projects.iter().zip(0..projects.len()).collect();
         
-        // Communication channel for the "choose" button
-        let controller_tx_clone = fe.controller_tx.clone();
-        let choose = Button::new("Choose", move |c| {
-            // When the user , send a message to the controller asking
-            // to load that model
-            eprintln!("In choose button 1");
-            
-            let sv:ViewRef<SelectView> =  match c.find_id::<SelectView>("model_list"){
-                Some(sv) => sv,
-                None => {
-                    eprintln!("Here: 81");
-                    panic!("Ouch!");
-                },
-            };
-            eprintln!("In choose button 2");
-            let model_rc = sv.selection();
-            eprintln!("In choose button 2.5 model_rc: {}", model_rc);
-            match   Rc::try_unwrap(model_rc) {
-                Ok(model) => {
-                    eprintln!("clicked  choose button: {}", model);
-                
-                    let message = format!("load {}", model);
-                    controller_tx_clone.send(
-                        ControllerMessage::UpdatedInputAvailable(message))
-                        .unwrap();
-                },
-                Err(e) =>   eprintln!("In choose button FAILED {} ", e),
-            };
-            eprintln!("In choose button 3");            
-        });
-        eprintln!("Built choose button");
-        fe.cursive.add_layer(LinearLayout::vertical()
-                             .child(sv)
-                             .child(choose)
-        );
+        loop {
+            let c = make_menu(win, &menu_vec, "TITLE");
+            if c == 0 {
+                break;
+            }else if c <= menu_vec.len() {
+                let project = menu_vec.iter().nth(c-1).unwrap().0;
+                status_line(&format!("Choose index {} project {}", c-1, &project));
+                self.do_project_menu(win, project);
+            }else if c == 0{
+                break;
+            }else{
+                status_line(&format!("Option {} not valid", c));
+            }
+        }    
+    }
+    fn main_menu(&mut self) -> bool{
+
+        // Draw the main menu.  Return false if quit is choosen
+
+        /* Get the screen bounds. */
+        let (max_x, max_y, x, y) = main_window_dims();
+
+        // Make window FIXME do I have to?
+        let win = newwin(max_y, max_x, y, x);    
+        redraw(win);
         
-        fe
-    }
+        // Top left of main menu
+        let start_x = max_x/10 as i32;
+        let start_y = max_y/10 as i32;
+        
+        let msg = "Enter choice:";
+        if mvwprintw(win, start_y, start_x, &msg) != 0 {
 
-    /// Step the UI by calling into Cursive's step function, then
-    /// processing any UI messages.
-    pub fn step(&mut self) -> bool {
-        if !self.cursive.is_running() {
-            return false;
         }
 
-        // Process any pending UI messages
-        while let Some(message) = self.fe_rx.try_iter().next() {
-            match message {
-                FrontEndMessage::UpdateOutput(text) => {
-                    let mut output = self.cursive
-                        .find_id::<TextView>("output")
-                        .unwrap();
-                    output.set_content(text);
-                }
+        // The main menu
+        let menu_items = vec!(("Choose Project", 1), ("Display Config", 2), ("Quit", 0));
+        for i in 0..menu_items.len() {
+            let item = format!("{} {}", i, menu_items.iter().nth(i).unwrap().0);
+            mvwprintw(win, start_y+i as i32 + 1 as i32, start_x, &item);
+        }
+
+        status_line(&"Waiting for menu choice".to_string());
+        let c = wgetch(win) - 48;
+
+        let mut ret = true;
+        match c {
+            0 => self.do_choose_project(win),
+            2 => ret = false,
+            _ => status_line(&format!("Menu choice {}", c).to_string()),
+        };
+        destroy_win(win);
+        ret
+    }
+    pub fn fe_start(&mut self) {
+
+        initscr();
+        raw();
+        start_color();
+        cbreak();
+        noecho();
+        curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+        keypad(stdscr(), true);
+        init_pair(1, COLOR_RED, COLOR_BLACK);
+        
+        
+        loop {
+            if self.main_menu() == false {
+                break;
             }
         }
-
-        // Step the UI
-        self.cursive.step();
-
-        true
+        fe_shut();
     }
 }
 
-pub struct Controller {
-    rx: mpsc::Receiver<ControllerMessage>,
-    ui: FrontEnd,
+fn fe_shut(){
+    /* Terminate ncurses. */
+    endwin();    
 }
 
-pub enum ControllerMessage {
-    UpdatedInputAvailable(String),
+
+fn display_model(win:WINDOW, msg:&String) {
+    mvwprintw(win, 0,0,msg.as_str());
+    redraw(win);
+    wgetch(win);
 }
 
-impl Controller {
-    /// Create a new controller
-    pub fn new(root_dir:String) -> Result<Controller, String> {
-        let (tx, rx) = mpsc::channel::<ControllerMessage>();
-        Ok(Controller {
-            rx: rx,
-            ui: FrontEnd::new(tx.clone(), root_dir),
-        })
+fn make_menu(win:WINDOW, menu_items:&Vec<(&String, usize)>, title:&str) -> usize{
+
+    // Return index of item selected.  Not bounded so caller must
+    // check
+
+    werase(win);
+
+    let (max_x, max_y) = (COLS(), LINES());
+    // Top left of main menu
+    let start_x = max_x/10 as i32;
+    let start_y = max_y/10 as i32;
+    
+    mvwprintw(win, start_y, start_x, title);
+    mvwprintw(win, start_y+1, start_x, "Enter choice");
+    for i in 0..menu_items.len() {
+        let item = format!("{} {}", i+1, &menu_items.iter().nth(i).unwrap().0);
+        mvwprintw(win, start_y+1+i as i32, start_x, &item);
     }
-    /// Run the controller
-    pub fn run(&mut self) {
-        while self.ui.step() {
-            while let Some(message) = self.rx.try_iter().next() {
-                // Handle messages arriving from the UI.
-                match message {
-                    ControllerMessage::UpdatedInputAvailable(text) => {
-                        eprintln!("Received Controller::run {}", text);
-                        self.ui
-                            .fe_tx
-                            .send(FrontEndMessage::UpdateOutput(text))
-                            .unwrap();
-                    }
-                };
-            }
-        }
+
+    // Add quit option
+    let y = start_y + menu_items.len() as i32 + 2;
+    mvwprintw(win, y, start_x, format!("{} {}", 0, "Back").as_str());
+    redraw(win);
+
+    let ret = wgetch(win);
+    if ret < 48 {
+        0
+    }else{
+        (ret - 48) as usize
     }
 }
 
-pub fn go(root_dir:String) {
-    // Launch the controller and UI
-    let controller = Controller::new(root_dir);
-    match controller {
-        Ok(mut controller) => controller.run(),
-        Err(e) => println!("Error: {}", e),
-    };
+
+fn status_line(msg:&String) {
+    let win = newwin(3, COLS(), LINES()-3, 0);    
+    box_(win, 0, 0);
+    redraw(win);
+    let msg = format!("{} {:?}", msg, env::current_dir());
+    if mvwprintw(win, 1, 1, &msg) != 0{
+        panic!("Failed mvwprint");
+    }
+    redraw(win);
+    //clrtoeol();
+}
+
+fn display_config() -> bool {
+    true
+}
+
+fn redraw(win:WINDOW) {
+    box_(win, 0, 0);
+    wrefresh(win);
+}    
+    
+fn main_window_dims() -> (i32, i32, i32, i32) {
+    (COLS()-4, LINES()-6, 2, 2)
+}
+
+
+fn destroy_win(win: WINDOW) {
+    let ch = ' ' as chtype;
+    wborder(win, ch, ch, ch, ch, ch, ch, ch, ch);
+    wrefresh(win);
+    delwin(win);
 }
