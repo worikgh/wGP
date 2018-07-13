@@ -2,7 +2,7 @@
 extern crate fs2;
 extern crate rand;
 extern crate statistical;
-//extern crate cursive;
+extern crate ncurses;
 
 mod front_end;
 mod config;
@@ -11,10 +11,12 @@ mod data;
 mod inputs;
 mod node;
 mod population;
+mod controller;
 mod rng;
 mod score;
 use config::Config;
 use data::Data;
+use front_end::FrontEnd;
 use population::Population;
 use score::score_individual;
 use std::env;
@@ -25,7 +27,7 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
-use front_end::FrontEnd;
+
 // The type of data that can be a terminal
 #[derive(Debug)]
 enum TerminalType {
@@ -200,8 +202,7 @@ fn main() {
     let cfg_file:String;
     println!("args.len() {}", args.len() );
     if args.len() == 1 {
-        let mut fe = FrontEnd::new();
-        fe.fe_start();
+        FrontEnd::new().fe_start();
     }else{
         cfg_file = args[1].clone();
 
