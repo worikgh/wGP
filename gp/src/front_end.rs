@@ -8,7 +8,12 @@ use std::fs;
 use std::path::Path;
 
 pub struct FrontEnd {
+
+    // The directory structure of simulations is constant belo this
+    // root directory
     root_dir:String,
+
+    // controller is in charge of the simulations
     controller:Controller,
 }
 
@@ -27,40 +32,61 @@ impl FrontEnd {
         }
     }
     
-    fn do_project_menu(&mut self, win:WINDOW, name:&String) {
+    fn default_config(&self, name:&str) -> Config {
+
+        // Get the default configuration file for all simulatuons.  It
+        // is iin the root of the directory structure in file named
+        // ".gp_config".  Or not.  If not use a hard coded default
+        let mut config = match File::open(format!("{}.gp_config", self.root_dir)){
+            Ok(f) => Config::new_file(f),
+            Err(_) => ConfigDefault::new(name),
+        };
+
+        // Update the configuration file.  The root_dir may not be
+        // accurate as the file may have been moved, and the "name" is
+        // particular to a simulation
+        config.data.insert("root_dir".to_string(), self.root_dir.clone());
+        config.data.insert("name".to_string(), name.to_string());
+        config
+    }
+    
+    fn do_project_menu(&mut self, win:WINDOW, name:&str) {
 
         // For the project named in @param name, offer a menu of
         // things to do with it
 
-        let status = self.controller.get_status(&name);
-        status_line(&format!("Cleared: {} Runnning: {} Path: {}", status.cleared, status.running, status.path));
+        let status = self.controller.get_status(name);
         // Get the root directory of the projects
         let projects:Vec<_> = vec!["Create      ".to_string(), "Status".to_string()];
         let actions:Vec<_> = projects.iter().zip(0..projects.len()).collect();
         
-        
+        status_line(&format!("Cleared: {} Runnning: {} Path: {}", status.cleared, status.running, status.path));        
         loop {
-            let c = make_menu(win, &actions, name.as_str());
+            let c = make_menu(win, &actions, name);
+            // Got a key.
+            
             status_line(&format!("key: {}",c));
             match c {
+                // 0 allways sends us back 
                 0 => break,
+                
                 1 => {
-                    // Build a configuration object.  This is top
-                    // level configuration that can be overridden by
-                    // project configuration First load default data.
-                    // Either in the root_dir/.gp_config or hard coded
+                    // Run a simulation.  Start by build a
+                    // configuration object.  This is top level
+                    // configuration that can be overridden by project
+                    // configuration First load default data.  Either
+                    // in the root_dir/.gp_config or hard coded
                     // DefaultConfig
-                    let mut config = match File::open(format!("{}.gp_config", self.root_dir)){
-                        Ok(f) => Config::new_file(f),
-                        Err(_) => ConfigDefault::new(name.as_str()),
-                    };
-                    config.data.insert("root_dir".to_string(), self.root_dir.clone());
-                    config.data.insert("name".to_string(), name.to_string());
+                    let config = self.default_config(name);
+
+                    // Use the controller o run the simulation.  If it
+                    // fails to launch the status is set appropriately
                     match self.controller.run_simulation(config.copy()) {
                         Ok(_) => (), 
                         Err(s) => status_line(&s.to_string()),
                     }
                 },
+                
                 2 => {
                     self.do_project_status(win, name);
                 }
@@ -68,9 +94,14 @@ impl FrontEnd {
             }
         }
     }
-    fn do_project_status(& mut self, win:WINDOW, name:&String){
+
+
+    fn do_project_status(& mut self, win:WINDOW, name:&str){
+        // Display the projects status
+
         werase(win);
-        let status = self.controller.get_status(&name);
+
+        let status = self.controller.get_status(name);
         // pub cleared:bool,
         // pub running:bool,
         // pub generation:usize,
@@ -91,13 +122,18 @@ impl FrontEnd {
             panic!("Failed mvprint");
         }
         redraw(win);
+
+        // FIXME  This should be a menu offering refresh or back
         wgetch(win);
     }
+    
     fn edit_config(&self, win:WINDOW, config:&Config) -> Config {
+        // This is waiting on developing technology to edit data 
         werase(win);
         
         config.copy()
     }
+    
     fn do_choose_project(&mut self, win:WINDOW) {
 
         // Get the root directory of the projects
@@ -144,7 +180,9 @@ impl FrontEnd {
             }
         }    
     }
-    fn main_menu(&mut self) -> bool{
+
+    
+    fn fe_menu(&mut self) -> bool{
 
         // Draw the main menu.  Return false if quit is choosen
 
@@ -161,11 +199,11 @@ impl FrontEnd {
         
         let msg = "Enter choice:";
         if mvwprintw(win, start_y, start_x, &msg) != 0 {
-
+            panic!("Failed mvprint");
         }
 
         // The main menu
-        let menu_items = vec!(("Choose Project", 1), ("Display Config", 2), ("Quit", 0));
+        let menu_items  = vec!(("Choose Project", 1), ("Display Config", 2), ("Quit", 0));
         for i in 0..menu_items.len() {
             let item = format!("{} {}", i, menu_items.iter().nth(i).unwrap().0);
             mvwprintw(win, start_y+i as i32 + 1 as i32, start_x, &item);
@@ -177,6 +215,7 @@ impl FrontEnd {
         let mut ret = true;
         match c {
             0 => self.do_choose_project(win),
+            1 => self.display_config(win, "<PROJECT>"),
             2 => ret = false,
             _ => status_line(&format!("Menu choice {}", c).to_string()),
         };
@@ -196,11 +235,41 @@ impl FrontEnd {
         
         
         loop {
-            if self.main_menu() == false {
+            if self.fe_menu() == false {
                 break;
             }
         }
         fe_shut();
+    }
+    
+    fn display_config(& mut self, win:WINDOW, name:&str)  {
+
+        let config = self.default_config(name);
+
+        let mut keys = config.data.keys();
+        eprintln!("display_config 4");
+
+        let (max_x, max_y) = (getmaxx(win), getmaxy(win));
+        // Top left of main menu
+        let start_x = max_x/10 as i32;
+        let start_y = max_y/10 as i32;
+        werase(win);
+
+        for y in 1..config.data.len() {
+            if let Some(key) = keys.next() {
+                let v = config.data.get(key).unwrap();
+                let item = format!("{}:\t{}", key, v);
+                eprintln!("y: {} x: {} max_x {}  max_y {} item {}", start_y+(1+y) as i32, start_x, max_x, max_y, item);
+                if mvwprintw(win, start_y+1+y as i32, start_x as i32, &item) != 0 {
+                    panic!(format!("Failed mvprint: y: {} x: {} max_x {}  max_y {}", start_y+(1+y) as i32, start_x, max_x, max_y));
+                }
+                redraw(win);
+            }
+        }
+        redraw(win);
+        // FIXME  Create a menu here!  0 => to go back
+        wgetch(win);
+        eprintln!("display_config 5");
     }
 }
 
@@ -261,9 +330,6 @@ fn status_line(msg:&String) {
     //clrtoeol();
 }
 
-fn display_config() -> bool {
-    true
-}
 
 fn redraw(win:WINDOW) {
     box_(win, 0, 0);
