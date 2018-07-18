@@ -3,9 +3,11 @@
 // ith the handle plus any other information that may be useful (Root
 // directory of simulation, configuration object, time it started....)
 
+use std::time::Instant;
 use std::fs::File;
 use std::collections::hash_map::Entry::Occupied;
 use std::collections::hash_map::Entry::Vacant;
+use config_default::ConfigDefault;
 use config::Config;
 //use std::path::Path;
 use population::Population;
@@ -13,8 +15,14 @@ use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
 use std::thread;
 pub struct Controller {
+
+    // The directory structure of simulations is constant belo this
+    // root directory
+    #[allow(dead_code)]
     root_dir:String,
-    handles:HashMap<String, (Arc<Mutex<SimulationStatus>>, thread::JoinHandle<()>)>,
+
+    // Maps the name of a simulation to data about it
+    handles:HashMap<String, (Arc<Mutex<SimulationStatus>>, thread::JoinHandle<()>, Config)>,
 }
 
 impl Controller {
@@ -24,15 +32,14 @@ impl Controller {
             handles:HashMap::new(),
         }
     }
-    pub fn get_status(& mut self, proj_name:&String) -> SimulationStatus {
+    pub fn get_status(&mut self, proj_name:&str) -> SimulationStatusReport {
         if let Occupied(entry)  = self.handles.entry(proj_name.to_string()) {
-            {
-                (*entry.get().0.lock().unwrap()).copy()
-            }
+            SimulationStatusReport::new(&(*entry.get().0.lock().unwrap()).copy(), &entry.get().2)
         }else{
-            SimulationStatus::new()
+            SimulationStatusReport::new(&SimulationStatus::new(), &ConfigDefault::new(proj_name))
         }
     }
+    
     pub fn run_simulation(&mut self, mut config: Config) -> Result<usize, &str> {
 
         // Run a simulation.  The config structure has all the
@@ -50,9 +57,7 @@ impl Controller {
                 // Over ride a default
                 let g = _cfg.get_string(&key).unwrap();
                 let v = g.clone();
-                eprintln!("Controller::run_simulation: key {} v {}", key, v);
                 config.data.insert(key.clone(), v);
-                eprintln!("Controller::run_simulation: Done");
             }
         }else{
             eprintln!("Cannot find local config: {}", cfg_fname);
@@ -82,11 +87,12 @@ impl Controller {
             // Create the shared memory to monitor and control simulation
             let bb = Arc::new(Mutex::new(SimulationStatus{running:false,
                                                           cleared:true,
+                                                          start:Instant::now(),
                                                           generation:0,
                                                           path:config.get_string("proj_dir").unwrap(),
             }));
-            let h = Population::new_sub_thread(config, bb.clone());
-            self.handles.insert(String::from(name.as_str()), (bb, h));
+            let h = Population::new_sub_thread(config.copy(), bb.clone());
+            self.handles.insert(String::from(name.as_str()), (bb, h, config));
             Ok(0)
         }else{
             Err("Running already")
@@ -97,6 +103,7 @@ impl Controller {
 impl SimulationStatus {
     pub fn new() -> SimulationStatus{
         SimulationStatus{
+            start:Instant::now(),
             cleared:false,
             running:false,
             generation:0,
@@ -105,6 +112,7 @@ impl SimulationStatus {
     }
     pub fn copy(&self) -> SimulationStatus{
         SimulationStatus{
+            start:self.start,
             cleared:self.cleared,
             running:self.running,
             generation:self.generation,
@@ -120,5 +128,32 @@ pub struct SimulationStatus {
     pub running:bool,
     pub generation:usize,
     pub path:String, // FIXME This should be a reference
+    pub start:Instant, // When started
 }
 
+impl SimulationStatusReport {
+    pub fn new(status:&SimulationStatus, config:&Config) -> SimulationStatusReport {
+        SimulationStatusReport {
+            cleared:status.cleared,
+            running:status.running,
+            generation:status.generation,
+            path:status.path.clone(),
+            started:status.start,
+            max_population:config.get_usize("max_population").unwrap(),
+            num_generations:config.get_usize("num_generations").unwrap(),
+            created:Instant::now(),
+        }
+    }
+    
+}
+
+pub struct SimulationStatusReport {
+    pub cleared:bool,
+    pub running:bool,
+    pub generation:usize,
+    pub path:String, // FIXME This should be a reference
+    pub created:Instant, // When this report created
+    pub started:Instant, // When simulation started
+    pub max_population:usize,
+    pub num_generations:usize,
+}
