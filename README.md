@@ -99,34 +99,6 @@ The format is:
 
     Example: data_file Abalone.in
     
-### model_data_file ###
-
-    The name of the file that records the simulations of the functions
-    as they are discovered Each time a function is developed that
-    performs better than any other discovered so far it is simulated
-    using the testing data and the results are recorded here
-
-    Example: model_data_file Abalone.txt
-
-### r_script_file ###
-
-    At the end of the simulation a R script is written out that will
-    generate graphs summarising the simulation.  This names that
-    file.
-
-    Example: r_script_file Abalone.R
-
-### plot_file ###
-
-    The name of the graphic file that the R script generates.
-
-    Example: plot_file Abalone.png
-
-### plot_xlab ###
-
-    The name of the objective to use on the x-label
-
-    Example: plot_xlab Abalone Age
 
 ### generations_file ###
 
