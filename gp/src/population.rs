@@ -3,6 +3,7 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
+use controller::SimulationStatus;
 use std::thread;
 use std::sync::{Mutex, Arc};
 use fs2::FileExt;
@@ -61,11 +62,10 @@ pub struct Population<'a> {
 }
 
 impl<'a> Population<'a> {
-    pub fn new_sub_thread(config:Config, a:Arc<Mutex<PopulationStatus>>) -> thread::JoinHandle<()>{
+    pub fn new_sub_thread(config:Config, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
         thread::spawn(move || {
             
             let training_percent = config.get_usize("training_percent").unwrap();
-
             // FIXME This is repeated in Population::new
             let mut root_dir = config.get_string("root_dir").unwrap();
             root_dir.push('/');
@@ -84,7 +84,6 @@ impl<'a> Population<'a> {
             let  generations_file = config.get_string("generations_file").unwrap();//.as_str();
             let mut generation_recorder = Recorder::new(&generations_file[..]);
             if population.do_train() {
-                eprintln!("Got to here population train");
                 let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
                 let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
 
@@ -105,10 +104,13 @@ impl<'a> Population<'a> {
 
                 for generation in 0..num_generations {
                     // Main loop
-                    eprintln!("Got to here generation {}", generation);
+                    {
+                        // Update status.  We are running
+                        let mut ps = a.lock().unwrap();
+                        (*ps).generation = generation;
+                    }
 
                     population.new_generation(generation);
-                    eprintln!("Got to here: Created generation");
                     let s = format!("{} {} {} {} {}",
                                     generation,
                                     population.best_id(),
@@ -117,20 +119,16 @@ impl<'a> Population<'a> {
                                     population.get_tree_id(population.best_id()).1.to_string());
                     generation_recorder.write_line(&s[..]);
                     generation_recorder.buffer.flush().unwrap();
-                    eprintln!("Got to here: Documented generation");
 
                     // Update the status structure and check if caller
                     // has decided to shut this thread don
                     let mut ps = a.lock().unwrap();
-                    eprintln!("Got to here: Got lock");
                     (*ps).generation = generation;
                     if ps.cleared == false {
-                        eprintln!("Got to here: Cleared");
                         // Caller wants us to stop
                         ps.running = false;
                         break;
                     }
-                    eprintln!("Got to here: End generation");
                 }
             }
 
@@ -138,9 +136,13 @@ impl<'a> Population<'a> {
                 // Do classification
                 population.classify_test();
             }
+            {
+                // Update status.  We are running
+                let mut ps = a.lock().unwrap();
+                (*ps).running = false;
+            }
             
-        })
-        
+        })        
     }
     pub fn new(config:&Config, d_all:&'a Data) -> Population<'a> {
         // Load the data
@@ -362,6 +364,7 @@ impl<'a> Population<'a> {
         ret
     }
     
+    #[allow(dead_code)]
     fn stats(&self) -> String {
 
         let mut nns = 0;  // Count individuals with special score > not a number
@@ -479,7 +482,7 @@ impl<'a> Population<'a> {
             self.str_rep.entry(st.clone()).or_insert(false);
             if !self.str_rep.get(st.as_str()).unwrap() {
                 new_trees.push((self.trees[cx].0, self.trees[cx].1.copy(), self.trees[cx].2.copy()));
-                self.str_rep.insert(st.clone(), true).unwrap();
+                self.str_rep.insert(st.clone(), true);
                 cp += 1;
             }
             cx += 1;
@@ -851,6 +854,7 @@ impl<'a> Population<'a> {
         }
         ret
     }
+
     pub fn classify_test(&self){
         let mut classification_recorder = Recorder::new(&self.classification_file);
         let ref index = self.d_all.testing_i;
@@ -974,11 +978,3 @@ impl<'a> Population<'a> {
     }
 }    
 
-pub struct PopulationStatus {
-
-    // Front end unsets this to stop simulation gently
-    pub cleared:bool,
-    pub running:bool,
-    pub generation:usize,
-    pub path:String, // FIXME This should be a reference
-}
