@@ -189,7 +189,7 @@ impl FrontEnd {
         }
 
         // Display the projects and wait for user to select one
-        let menu_vec:Vec<_> = projects.iter().zip(1..(1+projects.len())).map(|x| format!("{} {}", x.0, x.1)).collect();
+        let menu_vec:Vec<_> = projects.iter().zip(1..(1+projects.len())).map(|x| format!("{} {}", x.1, x.0)).collect();
         
         loop {
             self.fe_main(&menu_vec);
@@ -224,7 +224,7 @@ impl FrontEnd {
 
     pub fn fe_start(&mut self) {
         loop {
-            let c = self.make_menu(&vec!["Choose Object", "Display Config"] );
+            let c = self.make_menu(&vec!["Choose Project", "Display Config"] );
             match c {
                 0 => break,
                 1 => self.do_choose_object(),
