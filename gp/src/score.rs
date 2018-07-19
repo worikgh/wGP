@@ -9,32 +9,21 @@ use super::rng;
 // individuals.
 
 // The object of a simulation, in the general non-linear
-// classification case, is to evolve a good population of
-// classifiers.  Some will be generalists and be able to classify
-// to more than one class, others specialists good at identifying
-// a single class and others specialists over individual examples
-// able to properly classify them but not others.
+// classification case, is to evolve a good population of classifiers.
+
+// Each classifier is specialised for a class, the class is stored in
+// the Score struct along with a measure of quality.
 
 // Much of the evolution process is driven by scoring.  When a
-// individual is selected for crossover or for reproduction it is
-// selected using probabilities weighted by probability.  So here
-// in is a method to do roulette wheel selection.
+// individual is selected for crossover or for reproduction the
+// selection is weighted by probability.
 
-// Ordering the population is more difficult with a structured
-// score.  It is not possible to intuitively sort a one
-// dimensional array with a 2-dimensional score.
 
-// Individual's score can be used to classify the individuals of a
-// population.  Given a function domain that maps objects to
-// classifications individuals that classify the same set of
-// objects to the correct classifiers are related in a functional
-// sense.  This seems like a fruitful area for research.
 
-// To this end the score of a individual is a struct not a f64
 
 #[derive(Debug, Clone)]
 pub struct Score {
-    // Fitness calculated hen classifying to self.class.unwrap()
+    // Fitness calculated when classifying to self.class.unwrap()
     pub special:f64,
 
     //  The name of the class this score is specialised for. Obtained
@@ -43,14 +32,7 @@ pub struct Score {
 }
 
 impl Score {
-    // pub fn new(id:usize) -> Score {
-    //     Score {id:id, special:0.0, general:0.0, initialise:false}
-    // }
 
-    // pub fn Copy(&self) -> Score {
-    //     Score{class:self.class.clone(), special:self.special}
-    // }
-    
     pub fn evaluate(&self) -> f64 {
         self.special
     }
@@ -67,10 +49,6 @@ impl Score {
         let class = self.class.clone();
         Score{special:self.special, class:class}
     }
-    // Calculate the score of a indvidual against the data Param n: The
-    // individual Param d: The data to use.  'use_testing' is true if the
-    // individual is to be scored on the testing set.
-
 }
 
 #[inline]
@@ -95,12 +73,21 @@ pub fn score_individual(
     use_testing:bool) -> Score {
 
     // Score individual is called once per node.  Classifies it
-    // (decides what class it is for) and gives it a rating
+    // (decides what class it is for) and gives it a rating.
 
-    // debugging code
+    // Using data for which the classes are known, foreach class C run
+    // the Node for each example.  If the example is in Class C the
+    // desired result from the simulation is 1.0, if not it is -1.0.
+    // Using a loss function collect the results for each example in
+    // y_d.  The final score (score.special) is 1.0/(1.0+mean(y_d)).
+    // The class is the class that gets the highest score.
+
+    // FIXME Score could have a third part that is a measure of
+    // specificity.  Unsure how to represent that in a scalar.
+    // Perhaps the difference between the best and the second best
+    // score (for two classes)?
 
     // Get the data to do the evaluation on
-    let mut inputs = Inputs::new();
     let index:&Vec<usize>;
     if use_testing {
         index = &d.testing_i;
@@ -111,9 +98,12 @@ pub fn score_individual(
     let mut c:Option<String> = None;
     let mut best_s = 0.0;// std::f64::MIN;
 
+    let mut inputs = Inputs::new();
     for  class in d.class_names.iter() {
+
         // Store each distance from the estimate to the actual value
         // to calculate best and mean estimate
+
         let mut y_d:Vec<f64> = Vec::new(); // Distances
 
         for i in index {
@@ -149,7 +139,8 @@ pub fn score_individual(
             let l = loss_function(t, e);
             y_d.push(l);
         }
-        let mut s = (1.0/(index.len() as f64))*y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
+        let mut s = (1.0/(index.len() as f64))*
+            y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
         if s.is_finite() {
             // The score must finite and be increasing with quality.
             // The above is a quantity to minimise.  Cannot use a
@@ -166,6 +157,8 @@ pub fn score_individual(
     let _c = match c{
         Some(c) => c,
         None => {
+            // This only happens if there as no finite score for the
+            // Node for any class. 
             let n = rng::gen_range(0, d.class_names.len());
             d.class_names.iter().nth(n).unwrap().to_string()
         }
