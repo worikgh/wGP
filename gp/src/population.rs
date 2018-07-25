@@ -33,14 +33,14 @@ enum Mode {
     Resume, // Read a tree from a file and contine evolving it
     Run, // Read a tree from a file and use it as a classifier
 }
-pub struct Population<'a> {
+pub struct Population {
     trees:Vec<Tree>,
     str_rep:HashMap<String, bool>,
     maxid:usize,
 
     bnd_rec: Recorder,
 
-    d_all:&'a Data,
+    d_all:Data,
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
@@ -56,95 +56,12 @@ pub struct Population<'a> {
     // score_individual
     rescore:bool, 
 
-    // Path to the root directory of the simulation.  This is a
-    // different root_dir from the one in config.
-    //root_dir:String,
+    config:Config,
 }
 
-impl<'a> Population<'a> {
-    pub fn new_sub_thread(config:Config, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
-        thread::spawn(move || {
-            
-            let training_percent = config.get_usize("training_percent").unwrap();
-            // FIXME This is repeated in Population::new
-            let mut root_dir = config.get_string("root_dir").unwrap();
-            root_dir.push('/');
-            root_dir.push_str("Data/");
-            root_dir.push_str(config.get_string("name").unwrap().as_str());
-            root_dir.push('/');
+impl Population {
 
-            let mut data_dir = root_dir.clone(); 
-            data_dir.push_str(config.get_string("data_file").unwrap().as_str());
-
-            let d_all = Data::new(&data_dir, training_percent);
-
-            let mut population = Population::new(&config, &d_all);
-            population.initialise();
-
-            let  generations_file = config.get_string("generations_file").unwrap();//.as_str();
-            let mut generation_recorder = Recorder::new(&generations_file[..]);
-            if population.do_train() {
-                let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
-                let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
-
-                // The source of entropy.  
-                rng::reseed(seed.as_slice());
-
-                let num_generations = config.get_usize("num_generations").unwrap();
-                // Write the header for the generaion file
-                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-                generation_recorder.write_line(&s[..]);
-                generation_recorder.buffer.flush().unwrap();
-
-                {
-                    // Update status.  We are running
-                    let mut ps = a.lock().unwrap();
-                    (*ps).running = true;
-                }
-
-                for generation in 0..num_generations {
-                    // Main loop
-                    {
-                        // Update status.  We are running
-                        let mut ps = a.lock().unwrap();
-                        (*ps).generation = generation;
-                    }
-
-                    population.new_generation(generation);
-                    let s = format!("{} {} {} {} {}",
-                                    generation,
-                                    population.best_id(),
-                                    population.best_score().special,
-                                    population.len(),
-                                    population.get_tree_id(population.best_id()).1.to_string());
-                    generation_recorder.write_line(&s[..]);
-                    generation_recorder.buffer.flush().unwrap();
-
-                    // Update the status structure and check if caller
-                    // has decided to shut this thread don
-                    let mut ps = a.lock().unwrap();
-                    (*ps).generation = generation;
-                    if ps.cleared == false {
-                        // Caller wants us to stop
-                        ps.running = false;
-                        break;
-                    }
-                }
-            }
-
-            if population.do_classify() {
-                // Do classification
-                population.classify_test();
-            }
-            {
-                // Update status.  We are running
-                let mut ps = a.lock().unwrap();
-                (*ps).running = false;
-            }
-            
-        })        
-    }
-    pub fn new(config:&Config, d_all:&'a Data) -> Population<'a> {
+    pub fn new(config:Config) -> Population {
         // Load the data
         let mut root_dir = config.get_string("root_dir").unwrap();
         root_dir.push('/');
@@ -167,7 +84,10 @@ impl<'a> Population<'a> {
         let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
         let bnd_rec  = Recorder::new(birthsanddeaths_file.as_str());
         let save_file = config.get_string("save_file").unwrap();
-        let d_all = d_all;
+        let data_file = config.get_string("data_file").unwrap() ;
+        let training_percent = config.get_usize("training_percent").unwrap();
+        let d_all = Data::new(&data_file, training_percent);
+
         let maxid = 0;
 
         
@@ -230,9 +150,80 @@ impl<'a> Population<'a> {
             // If set then then when reading in trees reclassify them with
             // score_individual
             rescore,
-            
+
+            config,
         }
     }
+
+    pub fn run_in_thread(&self, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
+        self.initialise();
+        thread::spawn( move ||  {
+            self.initialise();
+
+            let  generations_file = self.config.get_string("generations_file").unwrap();//.as_str();
+            let mut generation_recorder = Recorder::new(&generations_file[..]);
+            if self.do_train() {
+                let seed = self.config.get_string("seed").unwrap(); // The seed is a string of usize numbers
+                let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
+
+                // The source of entropy.  
+                rng::reseed(seed.as_slice());
+
+                let num_generations = self.config.get_usize("num_generations").unwrap();
+                // Write the header for the generaion file
+                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+                generation_recorder.write_line(&s[..]);
+                generation_recorder.buffer.flush().unwrap();
+
+                {
+                    // Update status.  We are running
+                    let mut ps = a.lock().unwrap();
+                    (*ps).running = true;
+                }
+
+                for generation in 0..num_generations {
+                    // Main loop
+                    {
+                        // Update status.  We are running
+                        let mut ps = a.lock().unwrap();
+                        (*ps).generation = generation;
+                    }
+
+                    self.new_generation(generation);
+                    let s = format!("{} {} {} {} {}",
+                                    generation,
+                                    self.best_id(),
+                                    self.best_score().special,
+                                    self.len(),
+                                    self.get_tree_id(self.best_id()).1.to_string());
+                    generation_recorder.write_line(&s[..]);
+                    generation_recorder.buffer.flush().unwrap();
+
+                    // Update the status structure and check if caller
+                    // has decided to shut this thread don
+                    let mut ps = a.lock().unwrap();
+                    (*ps).generation = generation;
+                    if ps.cleared == false {
+                        // Caller wants us to stop
+                        ps.running = false;
+                        break;
+                    }
+                }
+            }
+
+            if self.do_classify() {
+                // Do classification
+                self.classify_test();
+            }
+            {
+                // Update status.  We are running
+                let mut ps = a.lock().unwrap();
+                (*ps).running = false;
+            }
+            
+        })
+    }
+
 
     fn initialise_rand(&mut self){
         // Initialise with a random tree
@@ -291,9 +282,12 @@ impl<'a> Population<'a> {
         self.trees.len()
     }
 
-    fn classify(&self, case:&Vec<f64>) -> String {
-        // Classify a case using the population.  @param `case` is
-        // the case to classify.  
+    fn classify(&self, case:&Vec<f64>) -> Option<(&str, String)> {
+        // Classify a case using the population.  @param `case` is the
+        // case to classify. The first &str in the pair returned is
+        // the class from self.d_all and the second part lists the
+        // classes in desending order of estimated liklihood along
+        // with the calculated liklihood
 
         // Create the input structure
         let mut input = Inputs::new();
@@ -312,6 +306,9 @@ impl<'a> Population<'a> {
         for t in self.trees.iter() {
             // Using each classifier
             let class = &t.2.class;
+
+            // Given a input of class C and a tree (t) whose class is
+            // D if C == D then score should be 1.0.  Else -1.0.  
             let score = t.1.evaluate(&input).unwrap();
             if score.is_finite() {
                 let quality = t.2.special;
@@ -319,38 +316,116 @@ impl<'a> Population<'a> {
             }
         }
 
-        // Interpretation.  The class with the highest score, weighted
-        // by the quality (score.special) and divided by the count of
+        // Interpretation of results.  The class with the highest
+        // score, weighted by the quality (score.special in
+        // results{<class>}[<index>].0) and divided by the count of
         // classifiers, is the class to choose.  The magnitude of the
-        // score relative to ho many classifiers contributed is a
+        // score relative to how many classifiers contributed is a
         // measure of quality of classification.  As is the score for
         // other classes
 
-        let mut scores:Vec<(&String, f64)> = Vec::new();
+        let mut scores:Vec<(&str, f64)> = Vec::new();
+
+        // Set this if at leaset one class had some finite results
+        let mut flag = false; 
+
         for k in self.d_all.class_names.iter() {
+
             let count = results.get(k).unwrap().len();
             let score = match count {
-                0 => 0.0,
-                _ => results.get(k).unwrap().iter().fold(0.0, |mut sum, &x| {sum += x.0*x.1; sum})  / (count  as f64)
+                0 => 0.0, // No finite results
+                _ => {
+                    flag = true; 
+                    results.get(k).unwrap().
+                        iter().fold(0.0, |mut sum, &x| {
+                            sum += x.0*x.1; sum
+                        })  / (count  as f64)
+                },
             };
-            scores.push((&k, score));
+            scores.push((k.as_str(), score));
         }
 
-        scores.sort_by(|a,b| {
-            let a1 = &a.1;
-            let b1 = &b.1;
-            b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
-        });
 
-        let mut ret = String::new();
-        for s in scores {
-            ret += s.0;
-            ret += " ";
-            ret += s.1.to_string().as_str();
-            ret += " ";
+        // Check case of all scores being 0.0
+        if !flag {
+            // This case cannot be classified
+            None
+        }else{
+            scores.sort_by(|a,b| {
+                let a1 = &a.1;
+                let b1 = &b.1;
+                b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
+            });
+
+            let mut ret = (scores.first().unwrap().0, String::new());
+            for s in scores {
+                ret.1 += s.0; // Class
+                ret.1 += " ";
+                ret.1 += s.1.to_string().as_str(); // Score
+                ret.1 += " ";
+            }
+            Some(ret)
         }
-        ret
+    }
+    pub fn analyse(&self) -> PopulationAnalysis {
+        let mut pa = PopulationAnalysis {
+            incorrect:0.0, 
+            correct:0.0,    
+            false_positives:HashMap::new(),
+            false_negatives:HashMap::new(),
+            counts:HashMap::new(),
+        };            
 
+        // Initialise counts 
+        self.get_classes().iter().map(|x| pa.counts.insert(x, 0));
+        
+        // Over the testing data clasify each one and compare ith true
+        // class
+        let ref index = self.d_all.testing_i;
+        for i in index {
+            let ref r = self.d_all.data[*i];
+            if let Some((s, _)) = self.classify(r){ 
+                // s is estimated class. 
+
+                // The actual class
+                let c = self.d_all.get_class(*i);
+
+                // Record how many instances of this class are seen
+                let _c = *pa.counts.get(c).unwrap();
+                pa.counts.insert(c, _c + 1);
+                
+                // Check if estimated class is correct.
+                if s != c {
+                    pa.incorrect = pa.incorrect + 1.0;
+                    let fp = *pa.false_positives.get_mut(s).unwrap();
+                    let nn = *pa.false_negatives.get_mut(c).unwrap();
+                    pa.false_positives.
+                        insert(s, fp + 1.0).
+                        unwrap();
+                    pa.false_negatives.
+                        insert(&c, nn + 1.0).
+                        unwrap();
+                }else{
+                    pa.correct = pa.correct + 1.0;
+                }
+            }//老虎
+        }
+
+        // Normalise
+        let total = pa.correct + pa.incorrect;
+        pa.correct = pa.correct/total;
+        pa.incorrect = pa.incorrect/total;
+        for c in self.get_classes().iter() {
+            let count = *pa.counts.get(c.as_str()).unwrap() as f64;
+
+            let fp = *pa.false_positives.get(c.as_str()).unwrap();
+            pa.false_positives.insert(c, fp / count);
+
+            let fp = *pa.false_negatives.get(c.as_str()).unwrap();
+            pa.false_negatives.insert(c, fp / count);
+        }
+        
+        pa
     }
     
     fn check(&self) -> bool {
@@ -474,7 +549,7 @@ impl<'a> Population<'a> {
         // Copy the best trees.
         let mut cp = 0; // Number copied
         let mut cx = 0; // Index into self.trees
-        let ncp = self.len()*100/self.copy_prob;
+        let ncp = self.len()*100/self.copy_prob; // Number to copy
         while cp < ncp && cx < self.len() {
             // FIXME This should be probabilistic with roulette wheel
             // selection
@@ -860,10 +935,11 @@ impl<'a> Population<'a> {
         let ref index = self.d_all.testing_i;
         for i in index {
             let ref r = self.d_all.data[*i];
-            let s = self.classify(r);
-            let c = self.d_all.get_class(*i);
-            classification_recorder.write_line(format!("Input: {:?} Class: {}  Classification: {}",r, c, s).as_str());
-        }        
+            if let Some((s, _)) = self.classify(r){
+                let c = self.d_all.get_class(*i);
+                classification_recorder.write_line(format!("Input: {:?} Class: {}  Classification: {}",r, c, s).as_str());
+            }
+        }
     }
     
     fn restore_trees(&self) -> Vec<Tree> {
@@ -978,3 +1054,22 @@ impl<'a> Population<'a> {
     }
 }    
 
+
+pub struct PopulationAnalysis<'a> {
+    // Stores a analysis of the population
+
+    // Over all fraction of miss-classifications
+    incorrect:f64,    
+
+    // Over all fraction of correct classifications
+    correct:f64,    
+
+    // False positives by class
+    false_positives:HashMap<&'a str, f64>,
+
+    // False negatives by class
+    false_negatives:HashMap<&'a str, f64>,
+
+    // Count examples of a class to normalise the other parameters
+    counts:HashMap<&'a str, usize>,
+}    
