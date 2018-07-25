@@ -212,8 +212,6 @@ fn main() {
         let num_generations = config.get_usize("num_generations").unwrap();
         let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
         let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
-        let data_file = config.get_string("data_file").unwrap() ;
-        let training_percent = config.get_usize("training_percent").unwrap();
         
         // Set up output file to record each generation:  FIXME move this to population
         let generations_file = config.get_string("generations_file").unwrap();
@@ -224,8 +222,7 @@ fn main() {
         rng::reseed(seed.as_slice());
 
         // Create a population. 
-        let data = Data::new(&data_file, training_percent);
-        let mut population = Population::new(&config, &data);
+        let mut population = Population::new(config.copy());
         population.initialise();
 
         // Write the header for the generaion file
