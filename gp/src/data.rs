@@ -24,7 +24,7 @@ use super::rng;
 //pub type Class = f64; // {1.0,0.0}
 
 // Hold data for training or testing.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Data {
     
     // Names of the columns
@@ -58,7 +58,8 @@ impl Data {
             }
     }
 
-    pub fn get_class(&self, i:usize) -> &String {
+    #[allow(dead_code)]
+    pub fn get_class(&self, i:usize) -> &str {
         let row = &self.data[i];
         let mut ret:Option<&String> = None;
         let start =  self.input_names.len();
@@ -71,25 +72,7 @@ impl Data {
         }
         ret.unwrap()
     }
-    #[allow(dead_code)]
-    /// Return all the data as a string
-    // fn to_string(&self) -> String {
-    //     let mut ret = "".to_string();
-    //     for r in &self.inputs {
-    //         for i in 0..self.input_names.len() {
-    //             ret.push_str(&r[i].to_string()[..]);
-    //             ret.push_str(",");
-    //         }
-    //     }
-    //     for r in &self.classes {
-    //         for i in 0..self.class_names.len() {
-    //             ret.push_str(&r[i].to_string()[..]);
-    //             ret.push_str(",");
-    //         }
-    //         ret.push_str("\n");
-    //     }
-    //     ret
-    // }
+
     pub fn new(data_file:&String, training_percent:usize) -> Data {
         let mut ret = Data{
             input_names:Vec::<String>::new(),
@@ -103,6 +86,11 @@ impl Data {
         ret.read_data(data_file, training_percent);
         ret
     }
+
+    // pub fn copy(&self) -> Data {
+    //     let mut ret = Data::new(self.data_file, self.training_percent);
+        
+    // }
     fn reset(&mut self){
         self.input_names = Vec::<String>::new();
         self.class_names = Vec::<String>::new();
@@ -111,6 +99,7 @@ impl Data {
         self.training_i = Vec::<usize>::new();
         self.all_i = Vec::<usize>::new();
     }        
+
     pub fn ith_row(&self, i:usize) -> &Vec<f64> {
         &self.data[i]
     }

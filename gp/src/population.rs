@@ -3,6 +3,8 @@ use node::Node;
 use node::NodeBox;
 use rng;
 
+use controller::SimulationCommand;
+use std::collections::hash_map::Entry::Vacant;
 use controller::SimulationStatus;
 use std::thread;
 use std::sync::{Mutex, Arc};
@@ -10,276 +12,458 @@ use fs2::FileExt;
 use inputs::Inputs;
 use score::Score;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;    
 use std::collections::HashMap;    
 use std::fs::File;
 use std::io::prelude::*;
-//use std::from_str::from_str;
-//use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
-//use std::io::File;
 use std::io::Write;
-use std;
 use super::Data;
 use super::Recorder;
 use super::score_individual;
 
 // Define a individual.  Consists of a node, a id, and a score.  Called
 // a Tree because it is not a sub-tree...
-type Tree = (usize, NodeBox, Score); 
+#[derive(Clone)]
+struct Tree {
+    id:usize,
+    score:Score,
+    tree:NodeBox,
+} 
 
-enum Mode {
-    Create, // Build a tree from scratch
-    Resume, // Read a tree from a file and contine evolving it
-    Run, // Read a tree from a file and use it as a classifier
-}
-pub struct Population {
-    trees:Vec<Tree>,
-    str_rep:HashMap<String, bool>,
+
+type ScoreTreeMap = BTreeMap<Score, Vec<String>>;
+
+#[derive(Clone)]
+struct Forest {
+    // Store trees in a Hash keyed by the string representation of the
+    // tree
+    trees:HashMap<String, Tree>,
+
+    
+    // Map score to trees so it is easy to find best and worst.  Store
+    // the string representation and beware of trees with same
+    // score...  Hence the vector
+    score_trees:ScoreTreeMap,
+
+    // Each tree in the forest has a unique id.
     maxid:usize,
 
-    bnd_rec: Recorder,
+    // // State for the iterator
+    // current:Option<<BTreeMap<Score, Vec<String>> as Iterator>::Item>,
+}
+
+// impl Iterator for Forest {
+//     // Iterate over all trees in score order
+//     type Item = Tree;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         match self.current {
+//             None => {
+//                 // First call
+//                 self.current = self.score_trees.iter().first();
+//                 match self.current {
+//                     None => // No trees...
+//                         None,
+//                     Some(_, t) => {
+//                         self.currrent = self.current.next();
+//                         t
+//                     },
+//                 }
+//             },
+//             Some(_, t) => {
+//                 self.currrent = self.current.next();
+//                 t
+//             },
+//         }
+//     }
+// }
+
+impl Forest {
+    fn new() -> Forest {
+        Forest{
+            maxid:0,
+            trees:HashMap::new(),
+            score_trees:BTreeMap::new(),
+        }
+    }
+    #[allow(dead_code)]
+    fn clear(&mut self) {
+        self.trees.clear();
+        self.score_trees.clear();
+        self.maxid = 0;
+    }
+    fn insert(&mut self, str_rep:&str, tree:Tree) {
+        self.trees.insert(str_rep.to_string(), tree.clone());
+        let v = self.score_trees.entry(tree.score).or_insert(Vec::new());
+        v.push(str_rep.to_string());
+        if tree.id > self.maxid {
+            self.maxid = tree.id;
+        }
+    }
+    fn has_tree_str(&self, t:&str) -> bool {
+        self.trees.contains_key(t)
+    }
+    fn has_tree_nb(&self, t:&NodeBox) -> bool {
+        self.has_tree_str(t.to_string().as_str())
+    }
+
+    fn delete_str(&mut self, str_rep:&str) -> usize{
+
+        // Delete a tree using the string rep
+        
+        let tree = self.trees.remove(&str_rep.to_string()).unwrap();
+        let ret = tree.id;
+        
+        // Get the vector holding the string representation of the
+        // tree and delete it
+        let v:Vec<String>;
+        {
+            let _v = self.score_trees.get(&tree.score).unwrap();
+            v = _v.iter().filter(|s| **s == str_rep).
+                map(|x| x.to_string()).collect();
+        }
+        if v.len() != 0 {
+            self.score_trees.insert(tree.score.clone(), v);
+        }else{
+            // If that is the last tree with this score
+            self.score_trees.remove(&tree.score).unwrap();
+        }
+        ret
+    }
+    #[allow(dead_code)]
+    fn delete(&mut self, tree:&Tree, str_rep:Option<&str>) -> usize{
+        // Delete a tree.  For callers that have a string
+        // representation of the tree already pass it in in Some(..),
+        // others pass None in second argument
+
+        // Return id of tree deleted
+        let str_rep = match str_rep {
+            Some(s) => s.to_string(),
+            None => tree.tree.to_string(),
+        };
+        let ret = self.trees.remove(&str_rep).unwrap().id;
+
+        // Get the vector holding the string representation of the
+        // tree and delete it
+        let v:Vec<String>;
+        {
+            let _v = self.score_trees.get(&tree.score).unwrap();
+            v = _v.iter().filter(|s| **s == str_rep).map(|x| x.to_string()).collect();
+        }
+        if v.len() != 0 {
+            self.score_trees.insert(tree.score.clone(), v);
+        }else{
+            // If that is the last tree with this score
+            self.score_trees.remove(&tree.score).unwrap();
+        }
+        ret
+    }
+    
+    #[allow(dead_code)]
+    fn copy(&self) -> Forest {
+        Forest {
+            maxid:self.maxid,
+
+            // FIXME  Can I mix copy and clone like this?
+            trees:self.trees.clone(),
+            score_trees:self.score_trees.clone(),
+            
+        }
+    }
+    #[allow(dead_code)]
+    fn count(&self) -> usize {
+        self.trees.len()
+    }
+}
+
+
+pub struct Population {
+
+    // The programme representations
+    forest:Forest,
 
     d_all:Data,
+
+    pop_config:PopulationConfig,
+}
+
+// The configuration data for a Population.
+#[derive(Clone)]
+struct PopulationConfig {
+
+    // For random number generator to make simulations repeatable
+    seed:Vec<u32>,
+    num_generations:usize,
+
+    // File name here log of each generation goes
+    generations_file:String,
+
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
-    save_file:String,
-    classification_file:String,
-    max_population:usize,
-    mode:Mode,
 
-    // If non 0 pick best 'filter' rules
+    save_file:String,
+    birthsanddeaths_file:String,
+    max_population:usize,
+
+    // If non 0 pick best 'filter' rules in restore trees
     filter:usize, 
 
-    // If set then then when reading in trees reclassify them with
-    // score_individual
+    // If set then then reclassify trees with score_individual in
+    // restore_trees
     rescore:bool, 
-
-    config:Config,
+    
 }
+
+impl PopulationConfig {
+    fn new(config:&Config) -> PopulationConfig {
+
+        PopulationConfig {
+            seed:config.get_string("seed").unwrap().split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect(),
+            num_generations:config.get_usize("num_generations").unwrap(),
+            crossover_percent:config.get_usize("crossover_percent").unwrap(),
+            mutate_prob:config.get_usize("mutate_prob").unwrap(),
+            copy_prob:config.get_usize("copy_prob").unwrap(),
+            max_population:config.get_usize("max_population").unwrap(),
+            filter:config.get_usize("filter").unwrap(),
+
+            birthsanddeaths_file:config.get_string("birthsanddeaths_filename").unwrap(),
+            generations_file:config.get_string("generations_file").unwrap(),
+            save_file:config.get_string("save_file").unwrap(),
+
+            rescore:match config.get_usize("filter") {
+                Some(r) => match r {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid value for {}: {}", "filter", r)
+                },
+                None => false, // default
+            },
+        }
+    }
+}
+
+pub struct PopulationAnalysis<'a> {
+    // Stores a analysis of the population
+
+    // Over all count of miss-classifications
+    incorrect:usize,    
+
+    // Over all count of correct classifications
+    correct:usize,    
+
+    // Number classified (Total 
+    classified:usize,
+
+    // Total population
+    population:usize,
+    
+    // The names of classes are owned by the Data object owned by the
+    // Population object
+
+    // False positives by class
+    false_positives:HashMap<&'a str, usize>,
+
+    // False negatives by class
+    false_negatives:HashMap<&'a str, usize>,
+
+    // Count examples of a class to normalise the other parameters
+    counts:HashMap<&'a str, usize>,
+
+}    
 
 impl Population {
 
-    pub fn new(config:Config) -> Population {
+    pub fn new(config:&Config) -> Population {
         // Load the data
-        let mut root_dir = config.get_string("root_dir").unwrap();
-        root_dir.push('/');
-        root_dir.push_str("Data/");
-        root_dir.push_str(config.get_string("name").unwrap().as_str());
-        root_dir.push('/');
+        
+        let pop_config = PopulationConfig::new(&config);
 
-        let mut classification_file = "".to_string();
-        let mut copy_prob = 0;
-        let mut crossover_percent = 0;
-        let mut max_population = 0;
-        let mut filter = 0; // Number of rules to use
-        let mut rescore = false; // Set => rescore rules on resume
-        let mut mutate_prob = 0;
-        let str_rep:HashMap<String, bool> =  HashMap::new();
-        let trees:Vec<Tree> = Vec::new();
+        let forest = Forest::new();
 
-        //  Variables all modes have in common
-        let mode:Mode;
-        let birthsanddeaths_file = config.get_string("birthsanddeaths_file").unwrap();
-        let bnd_rec  = Recorder::new(birthsanddeaths_file.as_str());
-        let save_file = config.get_string("save_file").unwrap();
         let data_file = config.get_string("data_file").unwrap() ;
         let training_percent = config.get_usize("training_percent").unwrap();
         let d_all = Data::new(&data_file, training_percent);
 
-        let maxid = 0;
 
-        
-        // First get the mode of the run
-        match config.get_string("mode").unwrap().as_str(){
-            "Create" => {
-                copy_prob = config.get_usize("copy_prob").unwrap();
-                crossover_percent = config.get_usize("crossover_percent").unwrap();
-                max_population = config.get_usize("max_population").unwrap();
-                mode = Mode::Create;
-                mutate_prob = config.get_usize("mutate_prob").unwrap();
-            },
-            "Resume" => {
-                copy_prob = config.get_usize("copy_prob").unwrap();
-                crossover_percent = config.get_usize("crossover_percent").unwrap();
-                filter = config.get_usize("filter").unwrap_or(0);
-                max_population = config.get_usize("max_population").unwrap();
-                mode = Mode::Resume;
-                mutate_prob = config.get_usize("mutate_prob").unwrap();
-                rescore =  match config.get_string("rescore") {
-                    Some(x) =>
-                    // A string.  Must be valid usize.  If it is 0 then false 
-                        if x.parse::<usize>().unwrap() == 1 {
-                            true
-                        }else if x.parse::<usize>().unwrap() == 0 {
-                            false
-                        }else{
-                            panic!("Invalid rescore: {}", x)
-                        },
-                    None => false // Default
-                }
-            },
-            "Run" => {
-                classification_file = config.get_string("classification_file").unwrap();                
-                filter = config.get_usize("filter").unwrap_or(0);
-                mode = Mode::Run;
-            },
-            x => panic!("{}", x),
-        };
-        // Declare the members of the population
+        // Write the header for the generaion file
+        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+        let  generations_file = pop_config.generations_file.clone();
+        let mut generation_recorder = Recorder::new(&generations_file[..]);
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
+
         Population{
-            trees,
-            str_rep,
-            maxid,
-
-            bnd_rec,
+            forest,
 
             d_all,
-            crossover_percent,
-            mutate_prob,
-            copy_prob,
-            save_file,
-            classification_file,
-            max_population,
-            mode,
-
-            // If non 0 pick best 'filter' rules
-            filter,
-
-            // If set then then when reading in trees reclassify them with
-            // score_individual
-            rescore,
-
-            config,
+            pop_config,
         }
+        
     }
 
-    pub fn run_in_thread(&self, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
-        self.initialise();
-        thread::spawn( move ||  {
-            self.initialise();
+    // pub fn config(&mut self, config:Config) {
+    //     // First get the mode of the run
+    //     self.copy_prob = config.get_usize("copy_prob").unwrap();
+    //     self.crossover_percent = config.get_usize("crossover_percent").unwrap();
+    //     self.max_population = config.get_usize("max_population").unwrap();
+    //     self.mutate_prob = config.get_usize("mutate_prob").unwrap();
 
-            let  generations_file = self.config.get_string("generations_file").unwrap();//.as_str();
-            let mut generation_recorder = Recorder::new(&generations_file[..]);
-            if self.do_train() {
-                let seed = self.config.get_string("seed").unwrap(); // The seed is a string of usize numbers
-                let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
+    //     self.filter = config.get_usize("filter").unwrap_or(0);
+    //     self.rescore =  match config.get_string("rescore") {
+    //         Some(x) =>
+    //         // A string.  Must be valid usize.  If it is 0 then false 
+    //             if x.parse::<usize>().unwrap() == 1 {
+    //                 true
+    //             }else if x.parse::<usize>().unwrap() == 0 {
+    //                 false
+    //             }else{
+    //                 panic!("Invalid rescore: {}", x)
+    //             },
+    //         None => false // Default
+    //     }
+    // }
 
-                // The source of entropy.  
-                rng::reseed(seed.as_slice());
-
-                let num_generations = self.config.get_usize("num_generations").unwrap();
-                // Write the header for the generaion file
-                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-                generation_recorder.write_line(&s[..]);
-                generation_recorder.buffer.flush().unwrap();
-
-                {
-                    // Update status.  We are running
-                    let mut ps = a.lock().unwrap();
-                    (*ps).running = true;
-                }
-
-                for generation in 0..num_generations {
-                    // Main loop
-                    {
-                        // Update status.  We are running
-                        let mut ps = a.lock().unwrap();
-                        (*ps).generation = generation;
-                    }
-
-                    self.new_generation(generation);
-                    let s = format!("{} {} {} {} {}",
-                                    generation,
-                                    self.best_id(),
-                                    self.best_score().special,
-                                    self.len(),
-                                    self.get_tree_id(self.best_id()).1.to_string());
-                    generation_recorder.write_line(&s[..]);
-                    generation_recorder.buffer.flush().unwrap();
-
-                    // Update the status structure and check if caller
-                    // has decided to shut this thread don
-                    let mut ps = a.lock().unwrap();
-                    (*ps).generation = generation;
-                    if ps.cleared == false {
-                        // Caller wants us to stop
-                        ps.running = false;
-                        break;
-                    }
-                }
-            }
-
-            if self.do_classify() {
-                // Do classification
-                self.classify_test();
-            }
-            {
-                // Update status.  We are running
-                let mut ps = a.lock().unwrap();
-                (*ps).running = false;
-            }
-            
-        })
-    }
-
-
-    fn initialise_rand(&mut self){
+    pub fn initialise_rand(&mut self){
         // Initialise with a random tree
         loop {
 
             // Random individual.  'add_individual' returns true when
             // a unique individual is created.
-            while !self.add_individual() {} 
+            let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
+            while !self.add_individual(&mut bnd_rec) {} 
 
-            if self.len() == self.max_population {
+            if self.len() == self.pop_config.max_population {
                 break;
             }
         }
     }        
 
-    pub fn initialise(&mut self){
-        match  self.mode {
-            Mode::Create => {
-                loop {
-                    self.initialise_rand();
-                    self.cull_sort();
-                    if self.len() > 0 {
-                        break;
-                    }
-                }
-            },
-            _ => self.trees = self.restore_trees(),
-        }
-    }
-
-    // FIXME The mode should be stored outside the population
-    pub fn do_classify(&self) -> bool {
-        match self.mode {
-            Mode::Run => true,
-            _ => false,
-        }
-    }
-
-    pub fn do_train(&self) -> bool {
-        match self.mode {
-            Mode::Run => false,
-            _ => true,
-        }
+    #[allow(dead_code)]
+    pub fn restore(&mut self){
+        // FIXME This could have a file name argument so Population
+        // does not need to know
+        // FIXME Restore trees must return a forest
+        self.forest = self.restore_trees();
     }
     
+    pub fn run_in_thread(&mut self, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
+
+        // Initialise a random population
+        self.initialise_rand();
+        
+        // FIXME There should be a idiomatic Rust way to do this
+        let mut forest = self.forest.clone(); 
+        
+        let mutate_prob = self.pop_config.mutate_prob;
+        let copy_prob = self.pop_config.copy_prob;
+        let crossover_percent = self.pop_config.crossover_percent; 
+        let max_population = self.pop_config.max_population;
+        let d_all = self.d_all.clone();
+        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
+        let save_file = self.pop_config.save_file.clone();
+
+
+        let seed:Vec<u32> = self.pop_config.seed.clone();
+        let num_generations = self.pop_config.num_generations;
+        // Write the header for the generaion file
+        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+        let  generations_file = self.pop_config.generations_file.clone();
+        let mut generation_recorder = Recorder::new(&generations_file[..]);
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
+        
+        thread::spawn( move ||  {
+
+            // The source of entropy.  
+            rng::reseed(seed.as_slice());
+
+
+            {
+                // Update status.  We are running
+                let mut ps = a.lock().unwrap();
+                (*ps).running = true;
+            }
+            let mut command:SimulationCommand;
+            let mut generation = 0;
+            loop {
+
+                // Main loop
+                {
+                    // Update status.  We are running
+                    let mut ps = a.lock().unwrap();
+                    (*ps).generation = generation;
+                    command = (*ps).command.clone();
+                    (*ps).command = SimulationCommand::Empty;
+                }
+                
+                match  command {
+                    SimulationCommand::Analyse => {
+                        command = SimulationCommand::Empty;
+                    },
+                    SimulationCommand::Empty => {
+                        forest = 
+                            Population::_new_generation(&forest, mutate_prob, copy_prob,
+                                                        crossover_percent,
+                                                        max_population, &d_all,
+                                                        &mut bnd_rec,
+                                                        save_file.as_str());
+                        generation = generation + 1;
+                    },
+                };
+                // Update the status structure and check if caller has
+                // decided to shut this thread down
+                let mut ps = a.lock().unwrap();
+                (*ps).generation = generation;
+                
+                if ps.cleared == false ||
+                    generation == num_generations  {
+                        
+                        // Caller wants us to stop
+                        ps.running = false;
+                        break;
+                    }
+            }
+            
+            {
+                // Update status.  We are not running
+                let mut ps = a.lock().unwrap();
+                (*ps).running = false;
+            }
+
+            
+        })
+    }
+
+
+
+    
+    #[allow(dead_code)]
     fn best_idx(&self) -> usize {
         0
     }    
     pub fn best_id(&self) -> usize {
-        self.trees[self.best_idx()].0
+
+        // Get trees associated with lowest score
+        let (_, vt) = self.forest.score_trees.iter().next().unwrap();
+        // Get a tree from that vector
+        let st = vt.iter().next().unwrap();
+        // Get the tree labled and return its id
+        self.forest.trees.get(st).unwrap().id
+            
     }
-    pub fn best_score(&self) -> Score {
-        self.trees[self.best_idx()].2.copy()
+    
+    pub fn best_score(&self) -> & Score {
+        // Get trees associated with lowest score
+        let (_, vt) = self.forest.score_trees.iter().next().unwrap();
+        // Get a tree from that vector
+        let st = vt.iter().next().unwrap();
+        // Get the tree labled and return its id
+        &self.forest.trees.get(st).unwrap().score
     }
     pub fn len(&self) -> usize {
-        self.trees.len()
+        self.forest.trees.len()
     }
 
     fn classify(&self, case:&Vec<f64>) -> Option<(&str, String)> {
@@ -298,20 +482,29 @@ impl Population {
 
         // Store the results of each classifier.  The class of the
         // classifier is used as the key and keep each result and the
-        // score/quality
+        // score/quality.  FIXME Make key &str
         let mut results:HashMap<&String, Vec<(f64,f64)>> = HashMap::new();
         for c in self.d_all.class_names.iter() {
             results.insert(c, Vec::new());
         }
-        for t in self.trees.iter() {
+
+        // Ask each classifier what it thinks of the case.  Each one
+        // is specialised to detect a particular class.  If a
+        // classifier thinks the case is of the class it is
+        // specialised for it returns 1.0.  Else -1.0.  The values are
+        // stored in the results hash.  If the classifier cannot make
+        // a decision it will not return a finite score
+        for (_, t) in self.forest.trees.iter() {
             // Using each classifier
-            let class = &t.2.class;
+            let class = &t.score.class;
 
             // Given a input of class C and a tree (t) whose class is
             // D if C == D then score should be 1.0.  Else -1.0.  
-            let score = t.1.evaluate(&input).unwrap();
+            let score = t.tree.evaluate(&input).unwrap();
             if score.is_finite() {
-                let quality = t.2.special;
+                // Score::special is from training and is how well this
+                // rule performed over all training cases.
+                let quality = t.score.special;
                 results.get_mut(class).unwrap().push((quality, score));
             }
         }
@@ -322,7 +515,7 @@ impl Population {
         // classifiers, is the class to choose.  The magnitude of the
         // score relative to how many classifiers contributed is a
         // measure of quality of classification.  As is the score for
-        // other classes
+        // other classes.  FIXME for clarity!
 
         let mut scores:Vec<(&str, f64)> = Vec::new();
 
@@ -338,10 +531,15 @@ impl Population {
                     flag = true; 
                     results.get(k).unwrap().
                         iter().fold(0.0, |mut sum, &x| {
+                            // x.0 is the quality from training for
+                            // this rule.  x.2 is ideally -1.0 if the
+                            // case is not of the rules class and 1.0
+                            // if it is of the rules class.
                             sum += x.0*x.1; sum
                         })  / (count  as f64)
                 },
             };
+            // For each class...
             scores.push((k.as_str(), score));
         }
 
@@ -357,31 +555,52 @@ impl Population {
                 b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
             });
 
+            // The return value.  ret.0 is the predicted class ret.1
+            // stores information for all classes in a string.
+            // "<class> <score>..." in descending score order
             let mut ret = (scores.first().unwrap().0, String::new());
             for s in scores {
-                ret.1 += s.0; // Class
-                ret.1 += " ";
-                ret.1 += s.1.to_string().as_str(); // Score
-                ret.1 += " ";
+                ret.1 += format!("{} {} ", s.0, // Class
+                                 s.1.to_string() // Score
+                ).as_str();
             }
             Some(ret)
         }
     }
+
     pub fn analyse(&self) -> PopulationAnalysis {
+
+        // Indexes for  data that is used for testing
+        let ref index = self.d_all.testing_i;
+        
+
+        // Build a object that describes the quality of the
+        // classifiers, as a set, over the test data
         let mut pa = PopulationAnalysis {
-            incorrect:0.0, 
-            correct:0.0,    
-            false_positives:HashMap::new(),
+            incorrect:0, // Proportion of incorrect classifications
+            correct:0,   // Proportion of correct classifications
+
+            // Per class proportion of classifications incorrrectly
+            // into that class
+            false_positives:HashMap::new(), 
+
+            // Per class proportion of classifications incorrrectly
+            // into another class
             false_negatives:HashMap::new(),
             counts:HashMap::new(),
+
+            // The proportion of cases classified
+            classified:0,
+
+            // The total number of cases
+            population:index.len(),
         };            
 
         // Initialise counts 
         self.get_classes().iter().map(|x| pa.counts.insert(x, 0));
         
-        // Over the testing data clasify each one and compare ith true
+        // Over the testing data clasify each record and compare with true
         // class
-        let ref index = self.d_all.testing_i;
         for i in index {
             let ref r = self.d_all.data[*i];
             if let Some((s, _)) = self.classify(r){ 
@@ -396,225 +615,207 @@ impl Population {
                 
                 // Check if estimated class is correct.
                 if s != c {
-                    pa.incorrect = pa.incorrect + 1.0;
+                    pa.incorrect = pa.incorrect + 1;
                     let fp = *pa.false_positives.get_mut(s).unwrap();
                     let nn = *pa.false_negatives.get_mut(c).unwrap();
                     pa.false_positives.
-                        insert(s, fp + 1.0).
+                        insert(s, fp + 1).
                         unwrap();
                     pa.false_negatives.
-                        insert(&c, nn + 1.0).
+                        insert(&c, nn + 1).
                         unwrap();
                 }else{
-                    pa.correct = pa.correct + 1.0;
+                    pa.correct = pa.correct + 1;
                 }
             }//老虎
-        }
-
-        // Normalise
-        let total = pa.correct + pa.incorrect;
-        pa.correct = pa.correct/total;
-        pa.incorrect = pa.incorrect/total;
-        for c in self.get_classes().iter() {
-            let count = *pa.counts.get(c.as_str()).unwrap() as f64;
-
-            let fp = *pa.false_positives.get(c.as_str()).unwrap();
-            pa.false_positives.insert(c, fp / count);
-
-            let fp = *pa.false_negatives.get(c.as_str()).unwrap();
-            pa.false_negatives.insert(c, fp / count);
         }
         
         pa
     }
-    
-    fn check(&self) -> bool {
-        let mut ret = true;
-        for i in self.trees.iter() {
-            if !i.2.special.is_finite() {
-                ret = false;
-                break;
-            }
-        }
-        ret
-    }
-    
-    #[allow(dead_code)]
-    fn stats(&self) -> String {
 
-        let mut nns = 0;  // Count individuals with special score > not a number
-        let mut cums = 0.0; // Cumulative special score
-        let mut maxs = 0.0; // Max special score
-        let mut mins = std::f64::MAX; // Minimum special score
+    // FIXME Refactor this so it calls a standalone function which can
+    // do a new generation referencing only the Forest so it can be put
+    // into a thread.  Having it a method of Population means that
+    // cannot access 'self'
+    fn _new_generation(forest:&Forest,
+                       mutate_prob:usize,
+                       copy_prob:usize,
+                       crossover_percent:usize, 
+                       max_population:usize,
+                       d_all:&Data,
+                       bnd_rec:&mut Recorder,
+                       save_file:&str) -> Forest // New trees
+    {
 
-        for i in 0..self.len() {
-            let sc = &self.trees[i].2;
 
-            if sc.special.is_finite() {
-                cums += sc.special;
-                if sc.special < mins {
-                    mins = sc.special;
-                }
-                if sc.special > maxs {
-                    maxs = sc.special;
-                }
-            }else{
-                nns += 1;
-            }
-
-        }
-        format!("Population {} Total score: {} Mean score: {} Min score: {} Max score: {} Invalid Score: {}",
-                self.len(),
-                cums,
-                cums/(self.len() as f64),
-                mins,
-                maxs,
-                nns)
-    }
-    
-    pub fn new_generation(&mut self, generation:usize){
-
-        // Call every generation
-
-        //println!("New generation: {} {}", generation, self.stats());
-
-        // Create a new population of trees to replace the old one
-        let mut new_trees:Vec<Tree> = Vec::new();
-
-        // To be ready for a new population reset self.str_rep which
-        // checks for duplicates
-        self.str_rep.clear();       
         
+        let mut new_forest = Forest::new();
+
+        // The unique id given to each tree
+        new_forest.maxid = forest.maxid + 1;
+
         // Generate some of new population from the old population. The
         // number of crossovers to do is (naturally) population.len()
         // * crossover_percent/100
-        let ncross = self.len() * self.crossover_percent/100;
+        let ncross = (forest.trees.len() * crossover_percent)/100;
         
         let mut nc = 0;
         while nc < ncross  {
 
-            // 
-            let (nb, l, r) = self.do_crossover();
+            let (nb, l, r) = Population::_do_crossover(&forest);
 
             let st = (*nb).to_string();
-            self.str_rep.entry(st.clone()).or_insert(false);
-            if !self.str_rep.get(&st).unwrap() {
-                // A unique child
-                let sc = score_individual(&nb, &self.d_all, true);
-                self.maxid += 1;
-                let id = self.maxid;
-                self.str_rep.insert(st, true);
-                let nbstr = (*nb).to_string();
-                self.bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
-                                                 l, r, id, &sc.special, nbstr));
-                self.trees.push((id, nb, sc));
-            }else{
-                // Child was not unique
+            if !forest.has_tree_nb(&nb) {
+
+                // A unique child in next generation
+                let sc = score_individual(&nb, d_all, true);
+                let id = new_forest.maxid+1;
+                new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+                new_forest.maxid = id;
+                bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
+                                            l, r, id, &sc.special, st));
             }
             nc += 1;
         }
 
         // Do mutation.  Take mut_probab % of trees, mutate them, add
         // them to the new population
-        for i in 0..self.trees.len() {
-            if rng::gen_range(0, 100) < self.mutate_prob {
+        for (_, t) in forest.trees.iter() {
+            if rng::gen_range(0, 100) < mutate_prob {
 
                 // The id of the tree being mutated
-                let id0 = self.trees[i].0;
+                let id0 = t.id;
 
-                // Copy the tree adn mutate it
-                let t = self.trees[i].1.copy();
-                let nb = self.mutate_tree(t);
+                // Copy the tree and mutate it.  Loose interest in
+                // original tree now
+                let t = t.tree.copy();
+
+                let nb = Population::_mutate_tree(t, d_all);
 
                 // Convert to a string to check for duplicates and for
-                // the record
-                let sc_1:String = (*nb).to_string();
-                self.str_rep.entry(sc_1.clone()).or_insert(false);
-                
-                if !self.str_rep.get(&sc_1).unwrap() {
+                // the record 
+                let st = (*nb).to_string();
+                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
                     // Unique in the new population
 
-                    let sc = score_individual(&nb, &self.d_all, true);
-                    self.maxid += 1;
-                    let id = self.maxid;
-
-                    self.bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
-                                                    id0, id, sc_1, &sc.special).as_str());
-                    self.str_rep.insert(sc_1, true);
-                    new_trees.push((id, nb, sc));
+                    let sc = score_individual(&nb, d_all, true);
+                    new_forest.maxid += 1;
+                    let id = new_forest.maxid;
+                    new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+                    bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
+                                               id0, new_forest.maxid, st, &sc.special).as_str());
                 }                
             }
         }
 
         // Copy the best trees.
         let mut cp = 0; // Number copied
-        let mut cx = 0; // Index into self.trees
-        let ncp = self.len()*100/self.copy_prob; // Number to copy
-        while cp < ncp && cx < self.len() {
-            // FIXME This should be probabilistic with roulette wheel
-            // selection
-            let st = (*self.trees[cx].1).to_string();
-            self.str_rep.entry(st.clone()).or_insert(false);
-            if !self.str_rep.get(st.as_str()).unwrap() {
-                new_trees.push((self.trees[cx].0, self.trees[cx].1.copy(), self.trees[cx].2.copy()));
-                self.str_rep.insert(st.clone(), true);
-                cp += 1;
+        let ncp = (forest.trees.len()*100)/copy_prob; // Number to copy
+        for (_, vt) in forest.score_trees.iter() {
+            //let it = forest.iter();
+            // FIXME This could be probabilistic with roulette wheel
+            // selection.
+            for st in vt.iter() {
+
+                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
+                    // Unique in the new population
+                    let t = forest.trees.get(st).unwrap();
+                    new_forest.trees.insert(st.to_string(), t.clone()).unwrap();
+                    cp += 1;
+                    if cp == ncp  {
+                        break;
+                    }
+                }
+                // FIXME The previous break should use a label or some thing
+                if cp == ncp  {
+                    break;
+                }
             }
-            cx += 1;
         }    
 
-        // New population is created
-        self.trees = new_trees;
-        // Eliminate all trees with no valid score and sort them
-        self.cull_sort();
+        // New population is created in new_forest;
+        
+        // Eliminate all trees with no valid score and sort them 
+        new_forest = Population::_cull_sort(&new_forest, bnd_rec);
 
         // Adjust population
         // let mut n1 = 0; // Number of individuals deleted
         // let mut n2 = 0; // Number of individuals added
-        if self.len() > self.max_population {
-            while self.len() > self.max_population {
-                let _ = self.delete_worst();
-                //n1 += 1;
-            }
+        while new_forest.trees.len() > max_population {
+            Population::_delete_worst(&mut new_forest, bnd_rec);
+            //n1 += 1;
         }
-        let flag =  self.len() < self.max_population; // Set if new individuals  to be added
-        while self.len() < self.max_population {
-            while !self.add_individual() {}
-            //n2 += 1;
+
+        let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
+        while new_forest.trees.len() < max_population {
+            while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
         }
         if flag {
-            // Sort again as we added new individuals
-            self.cull_sort(); 
-        }
-        //println!("Population B: {} deleted: {} Added {}", self.len(), n1, n2);
-        self.bnd_rec.buffer.flush().unwrap(); 
-
-        // Write out a record of all scores to do statistical analysis to help with debugging
-        let mut scores:Vec<f64> = Vec::new();
-        for i in 0..self.trees.len() {
-            let s = self.trees[i].2.special;
-            scores.push(s)
+            // Sort again as we added new individuals. FIXME cull_sort
+            // must be independant of Population for thread safety
+            new_forest = Population::_cull_sort(&new_forest, bnd_rec ); 
         }
 
-        let mut r = Recorder::new("fitness.csv");
-        let mut l1 = "".to_string();
-        let mut l2 = "".to_string();
-        l1 += &generation.to_string();
-        l2 += &generation.to_string();
-        l1 += ",G,";
-        l2 += ",S,";
-        for i in scores {
-            l2 += &i.to_string();
-            l2 += ",";
-        }
-        r.write_line(&l1);
-        r.write_line(&l2);
-        if ! self.check() {
+        bnd_rec.buffer.flush().unwrap(); 
+
+        // FIXME check must be independent of Population for thread
+        // safety
+
+        if !Population::_check(&new_forest) {
             panic!("Check failed");
         }
 
-        self.save_trees();
+        // FIXME save_trees must be independant of Population for
+        // thread safety
+        Population::_save_trees(&new_forest, save_file);
+        new_forest 
     }
+    
+    pub fn new_generation(&mut self, generation:usize){
+
+        // Call every generation
+        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
+        let new_forest = Population::_new_generation(&mut self.forest,
+                                                     self.pop_config.mutate_prob,
+                                                     self.pop_config.copy_prob,
+                                                     self.pop_config.crossover_percent, 
+                                                     self.pop_config.max_population,
+                                                     &self.d_all,
+                                                     &mut bnd_rec,
+                                                     self.pop_config.save_file.as_str());
+        
+
+        let s = format!("{} {} {} {} {}",
+                        generation,
+                        self.best_id(),
+                        self.best_score().special,
+                        self.len(),
+                        self.get_tree_id(self.best_id()).tree.to_string());
+        // Set up output file to record each generation:  FIXME move this to population
+        let generations_file = &self.pop_config.generations_file;
+        let mut generation_recorder = Recorder::new(generations_file.as_str());
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
+        self.forest = new_forest;
+    }
+    
+    fn _check(forest:&Forest) -> bool {
+        let mut ret = true;
+        for (_, v) in forest.trees.iter() {
+            if !v.score.special.is_finite() {
+                ret = false;
+                break;
+            }
+        }
+        ret
+    }
+    fn check(&self) -> bool {
+        Population::_check(&self.forest)
+    }
+    
+    
 
     // fn _unique_node(&self) -> NodeBox {
     //     // Generate a node and check if it is unique
@@ -642,81 +843,75 @@ impl Population {
     //     // Find the class of the new node
     // }
 
-    pub fn cull_sort(&mut self) {
+    fn _cull_sort(forest:&Forest, bnd_rec:& mut Recorder) -> Forest {
         // Remove individuals that we can no longer let live.  Eugenics!
         // Individuals with score NAN or 0
-        let mut z:Vec<Tree> = Vec::new();
-        for i in 0..self.trees.len(){
-            let (id, ev) = (self.trees[i].0, self.trees[i].2.copy());
-            if ev.special.is_finite(){
-                let t:Tree = (self.trees[i].0, self.trees[i].1.copy(), ev);
-                z.push(t);
+
+        // NOTE: The tree with id == maxid may be culled so it is not
+        // guaranteed that a tree ith id == maxid exists
+
+        let mut ret = Forest::new();
+        ret.maxid = forest.maxid;
+        for (k, v) in forest.trees.iter() {
+            if v.score.is_finite() {
+                ret.trees.insert(k.to_string(), v.clone()).unwrap();
             }else{
-                self.bnd_rec.write_line(
-                    &format!("RIP {} culled", id)
+                bnd_rec.write_line(
+                    &format!("RIP {} culled", v.id)
                 );
             }
         }
         
-        self.trees = z;
-        // Sort population by score then length, descending so the best are
-        // earliest.  Allows the worst individuals to be easilly
-        // pop'd off the end
-        &self.trees.sort_by(|a, b|{
-            let a1 = &a.2;
-            let b1 = &b.2;
-            match b1.partial_cmp(a1) {
-                Some(x) => match x {
-                    Ordering::Equal => a.1.count_nodes().cmp(&b.1.count_nodes()),
-                    Ordering::Greater => Ordering::Greater,
-                    Ordering::Less => Ordering::Less,
-                },
-                None => panic!("Cannot compare {:?} and {:?}", a1, b1)
-            }
-        });
-        // &self.trees[..].sort_by(|a,b| {
-        //     let a2 = &a.2;
-        //     let b2 = &b.2;
-        //     b2.partial_cmp(a2).unwrap_or(Ordering::Equal)
-        // });
-        // self.trees =
-        //  self.trees.into_iter().filter(|x| {
-        //     if !x.2.is_finite() {
-        //         self.bnd_rec.write_line(
-        //             &format!("RIP {} culled", x.0)
-        //         );
+        // // Sort population by score then length, descending so the best are
+        // // earliest.  Allows the worst individuals to be easilly
+        // // pop'd off the end
+        // ret.trees.sort_by(|a, b|{
+        //     let a1 = &a.score;
+        //     let b1 = &b.score;
+        //     match b1.partial_cmp(a1) {
+        //         Some(x) => match x {
+        //             Ordering::Equal => a.tree.count_nodes().cmp(&b.tree.count_nodes()),
+        //             Ordering::Greater => Ordering::Greater,
+        //             Ordering::Less => Ordering::Less,
+        //         },
+        //         None => panic!("Cannot compare {:?} and {:?}", a1, b1)
         //     }
-        //     x.2.is_finite()
-        // }).collect();
-    }            
-    pub fn get_tree_id(&self, id:usize) -> &Tree {
-        // Get a tree based on its id
-        let mut idx:Option<usize> = None;
-        for i in 0..self.trees.len() {
-            if self.trees[i].0 == id {
-                idx = Some(i);
-                break;
-            }
-        }
-        match idx {
-            Some(idx) => &self.trees[idx],
-            None => panic!("Cannot get node with id: {}", id),
-        }
+        // });
+        ret
+    }
+    pub fn cull_sort(&mut self, bnd_rec:&mut Recorder) {
+        Population::_cull_sort(&self.forest, bnd_rec);
     }
 
-    #[allow(dead_code)]
-    pub fn get_tree(&self, id:usize) -> &Tree {
-        // Get a tree based on its order in self.trees. Used to
-        // inumerate all trees.  FIXME Use a iterator
-        &self.trees[id]
+    fn _get_tree_id<'a>(forest:&'a Forest, id:usize) -> &'a Tree {
+
+        // Get a tree based on its id
+        // FIXME Use iterator on Forest or ScoreTreeMap
+        for (_, t) in forest.trees.iter() {
+            if t.id == id {
+                return &t;
+            }
+        }
+        panic!("Cannot get node with id: {}", id);
     }
+    fn get_tree_id(&self, id:usize) -> &Tree {    
+        Population::_get_tree_id(&self.forest, id)
+    }
+    
+
+    // #[allow(dead_code)]
+    // pub fn get_tree(&self, id:usize) -> &Tree {
+    //     // Get a tree based on its order in self.forest.trees. Used to
+    //     // inumerate all trees.  FIXME Use a iterator
+    //     &self.trees[id]
+    // }
 
     #[allow(dead_code)]
     fn get_trees_of_class(&self, class:&String) -> Vec<&Tree> {
         // FIXME: Ho do e do string comparison better in rust?  Is
         // there a problem ith this?
         let test = class.clone();
-        self.trees.iter().filter(|t| t.2.class == test).collect()
+        self.forest.trees.iter().filter(|(_,t)| t.score.class == test).map(|(_, x)| x).collect()
     }
     
     #[allow(dead_code)]
@@ -733,33 +928,37 @@ impl Population {
 
     fn select(&self) -> usize {
         // FIXME Implement choice of selection algorithm
-        Population::roulette_selection(&self.trees)
+        Population::roulette_selection(&self.forest)
     }
 
-    fn roulette_selection(trees:&Vec<Tree>) -> usize {
+    fn roulette_selection(forest:&Forest) -> usize {
 
+        // https://en.wikipedia.org/wiki/Fitness_proportionate_selection
         // Return the id of a individual selected using roulette wheel
         // selection:
-        // https://en.wikipedia.org/wiki/Fitness_proportionate_selection
+        // FIXME Return a reference to a tree not a id
 
-        let total_score:f64 = trees.iter().fold(0.0, | a, ref b| if b.2.is_finite() {
-            a+b.2.evaluate()
-        }else{
-            0.0
-        });
+        let total_score:f64 = forest.score_trees.iter().fold(0.0, | a, (ref b, ref v)| b.evaluate() * v.len() as f64 + a);
 
         if total_score == 0.0 {
-            trees[rng::gen_range(0, trees.len() - 1)].0
+            // Return a random key
+            let key_count = forest.trees.keys().count();
+            forest.trees.get(forest.trees.keys().nth(rng::gen_range(0, key_count - 1)).unwrap()).unwrap().id
         }else{
 
             let sel = rng::gen_range(0.0, total_score); 
             let mut  acc = 0.0;
             let mut ret:Option<usize> = None;  // Index of selected individual
-            for i in trees.iter() {
-                acc += i.2.evaluate();
-                if acc > sel {
-                    ret = Some(i.0);
-                    break;
+            'lable:
+            for (s, v) in forest.score_trees.iter() {
+                for t in v {
+                    acc += s.evaluate();
+                    if acc > sel {
+                        // Have the tree's string rep in t.  Get the
+                        // actual tree's id
+                        ret = Some(forest.trees.get(t).unwrap().id);
+                        break 'lable;
+                    }
                 }
             }
             match ret {
@@ -777,33 +976,68 @@ impl Population {
     //
     // ========================================
 
-    fn add_individual(&mut self) -> bool {
+    fn _add_individual(d_all:&Data,
+                       bnd_rec:&mut Recorder,
+                       forest:&mut Forest) -> bool {
+        
         // Add a individuall.  If the individual is already in the
         // population do not add it and return false
-        let n = Box::new(Node::new(&self.d_all.input_names, 0));
+        let n = Box::new(Node::new(&d_all.input_names, 0));
 
         let st = n.to_string();
-        self.str_rep.entry(st.clone()).or_insert(false);
+        if !forest.trees.contains_key(&st.clone()) {
 
-        if !self.str_rep.get(&st).unwrap() {
             // This node is unique
-            self.maxid += 1;
-            self.str_rep.insert(st, true);
+            let id = forest.maxid + 1;
 
-            let sc = score_individual(&n, &self.d_all, true);
+            let sc = score_individual(&n, d_all, true);
             {
-                self.bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", self.maxid, sc.special, n.to_string()));
-                self.trees.push((self.maxid, n, sc));
+                bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.special, n.to_string()));
             }
+            forest.insert(&st, Tree{id:id, score:sc, tree:n});
+            forest.maxid = id;
             true
         }else{
             false
         }
     }
-    pub fn delete_worst(&mut self) -> Tree {
-        let expired = self.trees.pop().unwrap();
-        self.bnd_rec.write_line(&format!("RIP {}", expired.0)[..]);
-        expired
+    fn add_individual(&mut self, bnd_rec:&mut Recorder) -> bool {
+        Population::_add_individual(&self.d_all, bnd_rec, &mut self.forest)
+    }
+    fn _delete_worst(forest:&mut Forest, bnd_rec:&mut Recorder) {
+
+        // Delete a tree from the forest that has the worst score
+
+        let t:String; // String rep of tree to delete
+        {
+            // Get the worst score
+            let s = forest.score_trees.iter().last().unwrap().0;
+
+            // Get the trees that have that score
+            let v = forest.score_trees.get(&s).unwrap();
+
+            // Choose one
+            t = v.iter().next().unwrap().clone();
+        }
+        // t is the string representation of the tree
+
+        // Get the id so e can rite a record
+        let id = forest.trees.get(&t).unwrap().id;
+        bnd_rec.write_line(&format!("RIP {} culled", id));
+        
+        // Delete it
+        forest.delete_str(t.as_str());
+                                
+        
+    }
+    pub fn delete_worst(&mut self, bnd_rec:&mut Recorder) {
+        Population::_delete_worst(&mut self.forest, bnd_rec);
+    }
+
+    fn _do_crossover(forest:&Forest)  -> (NodeBox, usize, usize){
+        let i0 = Population::roulette_selection(forest);
+        let i1 = Population::roulette_selection(forest);
+        (Population::_crossover(forest, i0, i1), i0, i1)
     }
     pub fn do_crossover(&mut self) -> (NodeBox, usize, usize){
 
@@ -814,15 +1048,10 @@ impl Population {
         // higher the probability it will be selected to be
         // participate in crossover
 
-        // Choose two trees to cross over.  
-        let i0 = self.select();
-        let i1 = self.select();
-        
-        (self.crossover(i0, i1), i0, i1)
+        Population::_do_crossover(&self.forest)
     }
 
-    fn mutate_tree(&mut self,i:NodeBox) -> NodeBox {
-        //let names = &self.names;
+    fn _mutate_tree(i:NodeBox, d_all:&Data) -> NodeBox {
         // How many nodes are there?
         let nc = i.count_nodes();
         // In decision branch?
@@ -848,11 +1077,11 @@ impl Population {
         // Choose which tree to mutate
         let selector = rng::gen_range(0, nc+1);
         if selector < dnc {
-            self.mutate_tree(i.d.unwrap())
+            Population::_mutate_tree(i.d.unwrap(), d_all)
         }else if selector < dnc + lnc {
-            self.mutate_tree(i.l.unwrap())
+            Population::_mutate_tree(i.l.unwrap(), d_all)
         }else if selector < dnc + lnc + rnc {
-            self.mutate_tree(i.r.unwrap())
+            Population::_mutate_tree(i.r.unwrap(), d_all)
         }else{
             // Mutate i
             // Two cases: This is a terminal, this is not terminal
@@ -862,7 +1091,7 @@ impl Population {
             }else{
                 // i is not terminal
                 let mut ret = i.copy();
-                let child = Node::new(&self.d_all.input_names, 0);
+                let child = Node::new(&d_all.input_names, 0);
                 // Select which branch
                 let selector = rng::gen_range(0, nc-1);
                 if selector < lnc {
@@ -878,25 +1107,25 @@ impl Population {
                 ret
             }
         }
-
     }
-
+    fn mutate_tree(&mut self,i:NodeBox) -> NodeBox {
+        Population::_mutate_tree(i, &self.d_all)
+    }
     
-    fn crossover(&mut self, lidx:usize, ridx:usize) -> NodeBox {
-
+    fn _crossover(forest:&Forest, lidx:usize, ridx:usize) -> NodeBox {
         // FIXME Use references to nodes (and lifetimes?) insted of
         // indexes.  Save on lookups
 
         // Given the indexes of the a left and a right tree combine
         // the two trees to make a third individual
-        let p:NodeBox;// Parent
-        let c:NodeBox;// Child
+        let p:NodeBox;
+        let c:NodeBox;
         if rng::random::<f64>() > 0.0 {
-            p = self.get_tree_id(lidx).1.random_node();
-            c = self.get_tree_id(ridx).1.random_node()
+            p = Population::_get_tree_id(&forest, lidx).tree.random_node();
+            c = Population::_get_tree_id(&forest, ridx).tree.random_node()
         }else{
-            c = self.get_tree_id(lidx).1.random_node();
-            p = self.get_tree_id(ridx).1.random_node()
+            c = Population::_get_tree_id(&forest, lidx).tree.random_node();
+            p = Population::_get_tree_id(&forest, ridx).tree.random_node()
         }
         // Make the new tree by copying c
         let c = c.copy();
@@ -930,33 +1159,25 @@ impl Population {
         ret
     }
 
-    pub fn classify_test(&self){
-        let mut classification_recorder = Recorder::new(&self.classification_file);
-        let ref index = self.d_all.testing_i;
-        for i in index {
-            let ref r = self.d_all.data[*i];
-            if let Some((s, _)) = self.classify(r){
-                let c = self.d_all.get_class(*i);
-                classification_recorder.write_line(format!("Input: {:?} Class: {}  Classification: {}",r, c, s).as_str());
-            }
-        }
+    fn crossover(&mut self, lidx:usize, ridx:usize) -> NodeBox {
+        Population::_crossover(&self.forest, lidx, ridx)
     }
+
     
-    fn restore_trees(&self) -> Vec<Tree> {
+    fn restore_trees(&self) -> Forest {
         // Read in saved state from a file, build a population from
         // it, and return the population
 
-        let mut max_id = 1;
-        let mut trees:Vec<Tree> = Vec::new();
+         let mut trees:Forest = Forest::new();
 
-        let file = File::open(&self.save_file).expect(format!("Cannot open {}", &self.save_file).as_str());
+        let file = File::open(&self.pop_config.save_file).expect(format!("Cannot open {}", &self.pop_config.save_file).as_str());
         file.lock_exclusive().expect("Failed to lock save file");
         let buf = BufReader::new(file);
 
         for line in buf.lines() {
             match line {
                 Ok(l) => {
-                    let start = &l[0..5]; // Class
+                    let start = &l[0..5]; // Class  
                     let class:String;
                     if start == "Class" {
                         let n = l.find("Score").unwrap();//expect(panic!("Badly formatted line: {}", l));
@@ -966,9 +1187,9 @@ impl Population {
                             let m = l.find("Node").unwrap();
                             let score_str = &l[(n+5)..m];
                             let score = score_str.parse::<f64>().unwrap();
-
-                            let node = NodeBox::new(Node::new_from_string(&l[m+4..]));
-                            let sc = if self.rescore {
+                            let strep = &l[m+4..];
+                            let node = NodeBox::new(Node::new_from_string(strep));
+                            let sc = if self.pop_config.rescore {
                                 // Reevaluate the trees against the
                                 // test part of the data
                                 let _sc = score_individual(&node, &self.d_all, true);
@@ -979,31 +1200,30 @@ impl Population {
                                 // Use the saved scores
                                 Score{class:class, special:score}
                             };
-                            let tree = (max_id, node, sc);
-                            trees.push(tree);
-                            max_id += 1;
+                            let id = trees.maxid + 1;
+                            trees.insert(strep, Tree{id:id, tree:node, score:sc});
                         }
                     }
                 },
                 Err(e) => panic!(e)
             }
         }
-        if self.filter > 0 {
+        if self.pop_config.filter > 0 {
             // Only have best self.filter trees of each class
 
-            // First sort trees by score and length
-            trees.sort_by(|a, b|{
-                let a1 = &a.2.special;
-                let b1 = &b.2.special;
-                match b1.partial_cmp(a1) {
-                    Some(x) => match x {
-                        Ordering::Equal => a.1.count_nodes().cmp(&b.1.count_nodes()),
-                        Ordering::Greater => Ordering::Greater,
-                        Ordering::Less => Ordering::Less,
-                    },
-                    None => panic!("Cannot compare {} and {}", a1, b1)
-                }
-            });
+            // // First sort trees by score and length
+            // trees.sort_by(|a, b|{
+            //     let a1 = &a.score.special;
+            //     let b1 = &b.score.special;
+            //     match b1.partial_cmp(a1) {
+            //         Some(x) => match x {
+            //             Ordering::Equal => a.tree.count_nodes().cmp(&b.tree.count_nodes()),
+            //             Ordering::Greater => Ordering::Greater,
+            //             Ordering::Less => Ordering::Less,
+            //         },
+            //         None => panic!("Cannot compare {} and {}", a1, b1)
+            //     }
+            // });
 
             // Build the structure that will hold the trees
             let mut class_trees:HashMap<String,  Vec<Tree>> = HashMap::new();
@@ -1012,12 +1232,10 @@ impl Population {
             }
 
             // Put trees into classes
-            for t in trees.iter() {
-                let c = t.2.class.clone();
-                if class_trees.get(&c).unwrap().len() < self.filter {
-                    // FIXME How do I avoid all this copying
-                    //println!("Adding tree: {}", t.1.to_string());
-                    class_trees.get_mut(&c).unwrap().push((t.0, t.1.copy(), t.2.copy()));
+            for (_,t) in trees.trees.iter() {
+                let c = t.score.class.clone();
+                if class_trees.get(&c).unwrap().len() < self.pop_config.filter {
+                    class_trees.get_mut(&c).unwrap().push(t.clone());
                 }
             }
 
@@ -1025,51 +1243,57 @@ impl Population {
             // trees on the way
             trees.clear();
             for ct in class_trees.keys() {
-                if class_trees.get(ct).unwrap().len() < self.filter {
+                if class_trees.get(ct).unwrap().len() < self.pop_config.filter {
                     eprintln!("Too few trees for class {} Have {} want {}",
-                              ct, class_trees.get(ct).unwrap().len(), self.filter);
+                              ct, class_trees.get(ct).unwrap().len(), self.pop_config.filter);
                 }
                 for t in class_trees.get(ct).unwrap() {
                     // FIXME How do I avoid all this copying
-                    trees.push((t.0, t.1.copy(), t.2.copy()));
+                    trees.insert(&t.tree.to_string(), t.clone());
                 }
             }
         }                
         trees
     }
-    pub fn save_trees(&self){
+
+    fn _save_trees(forest:&Forest, save_file:&str){
+        
         let mut state = String::new();
-        for i in 0..self.trees.len() {
-            let t = &self.trees[i];
-            state += &format!("Class{}Score{}Node{}\n", t.2.class, t.2.special,t.1.to_string());
+        for (s, t) in forest.trees.iter() {
+            state += &format!("Class{}Score{}Node{}\n", t.score.class, t.score.special,s);
         }
 
-        let file = File::create(&self.save_file).unwrap();
+        let file = File::create(save_file).unwrap();
         file.lock_exclusive().expect("Failed to lock save file");
 
         let mut buf = BufWriter::new(file);
         buf.write(&state.into_bytes()[..]).unwrap();
-
+    }
+    
+    pub fn save_trees(&self){
+        Population::_save_trees(&self.forest, self.pop_config.save_file.as_str())
         
     }
 }    
 
 
-pub struct PopulationAnalysis<'a> {
-    // Stores a analysis of the population
+// pub fn run_in_thread(config:&Config, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()> {
+//     // Load the data
+    
+//     let pop_config = PopulationConfig::new(&config);
 
-    // Over all fraction of miss-classifications
-    incorrect:f64,    
+//     let forest = Forest::new();
 
-    // Over all fraction of correct classifications
-    correct:f64,    
+//     let data_file = config.get_string("data_file").unwrap() ;
+//     let training_percent = config.get_usize("training_percent").unwrap();
+//     let d_all = Data::new(&data_file, training_percent);
 
-    // False positives by class
-    false_positives:HashMap<&'a str, f64>,
 
-    // False negatives by class
-    false_negatives:HashMap<&'a str, f64>,
+//     // Write the header for the generaion file
+//     let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+//     let  generations_file = pop_config.generations_file.clone();
+//     let mut generation_recorder = Recorder::new(&generations_file[..]);
+//     generation_recorder.write_line(&s[..]);
+//     generation_recorder.buffer.flush().unwrap();
 
-    // Count examples of a class to normalise the other parameters
-    counts:HashMap<&'a str, usize>,
-}    
+// }

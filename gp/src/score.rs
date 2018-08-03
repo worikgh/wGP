@@ -21,7 +21,7 @@ use super::rng;
 
 
 
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Score {
     // Fitness calculated when classifying to self.class.unwrap()
     pub special:f64,
@@ -48,6 +48,29 @@ impl Score {
     pub fn copy(&self) -> Score {
         let class = self.class.clone();
         Score{special:self.special, class:class}
+    }
+}
+
+impl Ord for Score {
+    fn cmp(&self, other: &Score) -> Ordering {
+        let s1 = self.evaluate();
+        let s2 = other.evaluate();
+        let o = s1 - s2;
+        if o > 0.0 {
+            Ordering::Less
+        }else if o < 0.0 {
+            Ordering::Greater
+        }else{
+            Ordering::Equal
+        }
+    }
+}
+// https://doc.rust-lang.org/std/cmp/trait.Eq.html
+impl Eq for Score {}
+
+impl PartialOrd for Score {
+    fn partial_cmp(&self, other: &Score) -> Option<Ordering> {
+        self.partial_cmp(other)
     }
 }
 

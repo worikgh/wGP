@@ -1,4 +1,5 @@
 #[macro_use] extern crate lazy_static;
+
 extern crate fs2;
 extern crate rand;
 extern crate statistical;
@@ -20,36 +21,12 @@ use front_end::FrontEnd;
 use population::Population;
 use score::score_individual;
 use std::env;
-use std::fmt;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
-
-// The type of data that can be a terminal
-#[derive(Debug)]
-enum TerminalType {
-    Float(f64),
-    // Custom terminals for inputs
-    Inputf64(String),
-}
-
-// Get the data from the terminal
-fn gt(tt:&TerminalType) -> String {
-    match tt {
-        &TerminalType::Float(f) => format!("Float {} ",f),
-        &TerminalType::Inputf64(ref s) => format!("{} ",s),
-    }
-}
-
-impl fmt::Display for TerminalType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n = gt(self);
-        write!(f, "{}", n)
-    }
-}
 
 use node::NodeBox;
 //use node::Node;
@@ -175,6 +152,9 @@ pub struct Recorder {
     created:SystemTime,
 }
 impl Recorder {
+    // FIXME This is really bad.  This writes to files with no way of
+    // stopping two Recorders writing to the same file in confusing
+    // ways
     fn new(file_name:&str) -> Recorder {
         eprintln!("Recorder new. Buffer name: {}", file_name);
         Recorder{
@@ -186,6 +166,7 @@ impl Recorder {
         }
     }
     fn write_line(&mut self, line:&str) {
+        // FIXME Thread safety.
         let now = format!("{} ", self.created.elapsed().unwrap().as_secs());
         self.buffer.write(&now.into_bytes()[..]).unwrap();
         self.buffer.write(&line.to_string().into_bytes()[..]).unwrap();
@@ -213,45 +194,21 @@ fn main() {
         let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
         let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
         
-        // Set up output file to record each generation:  FIXME move this to population
-        let generations_file = config.get_string("generations_file").unwrap();
-        let mut generation_recorder = Recorder::new(generations_file.as_str());
 
 
         // The source of entropy.  
         rng::reseed(seed.as_slice());
 
         // Create a population. 
-        let mut population = Population::new(config.copy());
-        population.initialise();
+        let mut population = Population::new(&config);
+        population.initialise_rand();
 
-        // Write the header for the generaion file
-        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
 
-        if population.do_train() {
 
-            for generation in 0..num_generations {
-                // Main loop
-                
-                population.new_generation(generation);
-                let s = format!("{} {} {} {} {}",
-                                generation,
-                                population.best_id(),
-                                population.best_score().special,
-                                population.len(),
-                                population.get_tree_id(population.best_id()).1.to_string());
-                generation_recorder.write_line(&s[..]);
-                generation_recorder.buffer.flush().unwrap();
-            }
+        for generation in 0..num_generations {
+            // Main loop
+            
+            population.new_generation(generation);
         }
-
-        if population.do_classify() {
-            // Do classification
-            population.classify_test();
-        }
-        //println!("Bye!");
-        
-    }
+    }        
 }

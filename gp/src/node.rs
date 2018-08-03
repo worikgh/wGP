@@ -1,14 +1,37 @@
 
 // The basic unit of aAST
 pub type NodeBox = Box<Node>;
+use std::fmt;
 use rng;
 use std;
 //use super::Operator;
-use super::TerminalType;
 use inputs::Inputs;
 
+// The type of data that can be a terminal
+#[derive(Debug, Clone)]
+enum TerminalType {
+    Float(f64),
+    // Custom terminals for inputs
+    Inputf64(String),
+}
+
+// Get the data from the terminal
+fn gt(tt:&TerminalType) -> String {
+    match tt {
+        &TerminalType::Float(f) => format!("Float {} ",f),
+        &TerminalType::Inputf64(ref s) => format!("{} ",s),
+    }
+}
+
+impl fmt::Display for TerminalType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let n = gt(self);
+        write!(f, "{}", n)
+    }
+}
+
 // The operations that are implemented
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Operator {
     Add,  
     Log,  
@@ -22,7 +45,7 @@ enum Operator {
     Terminal(TerminalType),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
     // Operator and a left and right child trees, or None.  
     o:Operator,

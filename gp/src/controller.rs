@@ -14,6 +14,20 @@ use population::Population;
 use std::collections::HashMap;    
 use std::sync::{Mutex, Arc};
 use std::thread;
+
+#[derive(Clone)]
+pub enum SimulationCommand {
+    // Used to tell a running simulation to stop generating
+    // generations and do some thing else
+
+    // Default.  Carry on
+    Empty, 
+
+    // Run Population::analyse to report on the quality of the
+    // simulation
+    Analyse, 
+}
+
 pub struct Controller {
 
     // The directory structure of simulations is constant belo this
@@ -40,17 +54,19 @@ impl Controller {
         }
     }
     
-    pub fn run_simulation(&mut self, mut config: Config) -> Result<usize, &str> {
+    pub fn run_simulation(&mut self, config: & Config) -> Result<usize, &str> {
 
         // Run a simulation.  The config structure has all the
         // information needed
 
+        
         // Get the project configuration and over write the defaults.
         // FIXME Should this be done here or in
         // Controller::run_simulation?
         let proj_dir = format!("{}Data/", config.get_string("root_dir").unwrap());
         let cfg_fname = format!("{}{}/.gp_config", proj_dir, config.get_string("name").unwrap());
 
+        let mut config = config.copy();
         if let Ok(f) = File::open(cfg_fname.clone()) {
             let _cfg = Config::new_file(f);
             for key in _cfg.data.keys() {
@@ -89,13 +105,24 @@ impl Controller {
                                                           cleared:true,
                                                           start:Instant::now(),
                                                           generation:0,
+                                                          command:SimulationCommand::Empty,
                                                           path:config.get_string("proj_dir").unwrap(),
             }));
-            let h = Population::new_sub_thread(config.copy(), bb.clone());
-            self.handles.insert(String::from(name.as_str()), (bb, h, config));
+            let mut p = Population::new(&config);
+            let h = p.run_in_thread(bb.clone());
+            self.handles.insert(String::from(name.as_str()), (bb, h, config.copy()));
             Ok(0)
         }else{
             Err("Running already")
+        }
+    }
+    pub fn get_config(&mut self, proj_name:&str) -> Option<Config> {
+        if let Occupied(entry)  = self.handles.entry(proj_name.to_string()) {
+            // FIXME If the simulation ever can rite to Config object
+            // this will need a lock
+            Some(entry.get().2.copy())
+        }else{
+            None
         }
     }
 }
@@ -108,6 +135,7 @@ impl SimulationStatus {
             running:false,
             generation:0,
             path:"".to_string(),
+            command:SimulationCommand::Empty,
         }
     }
     pub fn copy(&self) -> SimulationStatus{
@@ -117,6 +145,7 @@ impl SimulationStatus {
             running:self.running,
             generation:self.generation,
             path:self.path.clone(),
+            command:self.command.clone(),
         }
     }
 }
@@ -129,6 +158,7 @@ pub struct SimulationStatus {
     pub generation:usize,
     pub path:String, // FIXME This should be a reference
     pub start:Instant, // When started
+    pub command:SimulationCommand,
 }
 
 impl SimulationStatusReport {

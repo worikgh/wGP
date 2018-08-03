@@ -43,7 +43,6 @@ impl ConfigDefault {
         data.insert("training_percent".to_string(), "10".to_string());
 
         data.insert("birthsanddeaths_file".to_string(), format!("{}{}_BnD.txt", work_dir, name).to_string());
-        data.insert("classification_file".to_string(), format!("{}{}_Classes.txt", work_dir, name).to_string());
         data.insert("data_file".to_string(), "data.in".to_string());
         data.insert("filter".to_string(), "1".to_string());
         data.insert("generations_file".to_string(), format!("{}{}_Generations.txt", work_dir, name).to_string());

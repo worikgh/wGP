@@ -1,3 +1,5 @@
+use population::PopulationAnalysis;
+//use std::collections::HashMap;    
 use config::Config;
 use config_default::ConfigDefault;
 use controller::Controller;
@@ -77,53 +79,195 @@ impl FrontEnd {
             status_window:status_window,
         }
     }
-    
-    fn default_config(&self, name:&str) -> Config {
-
-        // Get the default configuration file for all simulatuons.  It
-        // is iin the root of the directory structure in file named
-        // ".gp_config".  Or not.  If not use a hard coded default
-        let mut config = match File::open(format!("{}.gp_config", self.root_dir)){
-            Ok(f) => Config::new_file(f),
-            Err(_) => ConfigDefault::new(name),
-        };
-
-        // Update the configuration file.  The root_dir may not be
-        // accurate as the file may have been moved, and the "name" is
-        // particular to a simulation
-        config.data.insert("root_dir".to_string(), self.root_dir.clone());
-        config.data.insert("name".to_string(), name.to_string());
-        config
+    pub fn fe_start(&mut self) {
+        // Entry point
+        loop {
+            let c = self.make_menu(&vec!["Choose Project", "Display Config"] );
+            match c {
+                0 => break,
+                1 => self.do_choose_object(),
+                2 => self.do_display_config("<PROJECT NAME>"),
+                _ => panic!(),
+            }
+        }
+        fe_shut();
     }
-    
-    fn do_project(& mut self, name:&str) {
 
+    fn do_choose_object(&mut self){
+
+        // Level one
+
+        // Get the root directory of the projects
+        let proj_dir = Path::new("./Data/");
+        self.status_line(&format!("Current Directory {:?}", env::current_dir()));
+
+        // Get the sub-directories that are projects
+        let mut projects:Vec<String> = Vec::new();
+        let entries = match fs::read_dir(proj_dir) {
+            Ok(v) => v,
+            Err(e) => {
+                let s = format!("Failed reading {:?} e: {} cd: {:?}", proj_dir.to_str(), e, env::current_dir());
+                fe_shut();
+                panic!(s);
+            }
+        };
+        
+        for e in entries {
+            // For ever entry in the directory...
+            let p = e.unwrap().path();
+            let md = p.metadata().expect("metadata call failed");
+            if md.file_type().is_dir() {
+                // ...if a sub directories it is a project
+                let sp = p.file_name().unwrap().to_str().unwrap().to_string();
+                projects.push(sp);
+            }
+        }
+
+        // Display the projects for user to select one
+        let menu_vec:Vec<_> = projects.iter().zip(1..(1+projects.len())).map(|x| format!("{} {}", x.1, x.0)).collect();
+        loop {
+            self.fe_main(&menu_vec);
+            let c = self.make_menu(&vec!["Enter Choice", "Display Config", "Quit"] );
+            if c == 0 {
+                break;
+            }else if c <= menu_vec.len() {
+                let project = projects.iter().nth(c-1).unwrap().clone();
+                self.status_line(&format!("Choose index {} project {}", c-1, &project));
+                self.do_project(&project);
+            }else if c == 0{
+                break;
+            }else{
+                self.status_line(&format!("Option {} not valid", c));
+            }
+        }    
+        
+    }
+
+    fn do_display_config(&self, name:&str)  {
+        // Level One
+        let config = self.default_config(name);
+
+        let mut keys = config.data.keys();
+        let mut cfg_strings:Vec<String> = Vec::new();
+        for _ in 1..config.data.len() {
+            if let Some(key) = keys.next() {
+                let v = config.data.get(key).unwrap();
+                let item = format!("{}:\t{}", key, v);
+                cfg_strings.push(item);
+            }
+        }
+        self.fe_main(&cfg_strings);
+    }
+
+    // End of level one
+    //------------------------------------------
+    // Level two
+
+    fn do_project(& mut self, name:&str) {
+        // Level two
+
+        // Display a project's status and options on
+        // starting/stopping/resuming/analysing it or using it to
+        // classify a example
         loop {
             werase(self.main_window);
 
             let status = self.controller.get_status(name);
-            let projects:Vec<_> = vec!["Create", "Refresh Status"];        
-            // pub cleared:bool,
-            // pub running:bool,
-            // pub generation:usize,
-            // pub path:String, // FIXME This should be a reference
-            if mvwprintw(self.main_window, 1, 1, &format!("Name: {}", name)) != 0 {
-                panic!("Failed mvprint");
-            }
-            if mvwprintw(self.main_window, 2, 1, &format!("Cleared: {:?}", status.cleared)) != 0 {
-                panic!("Failed mvprint");
-            }
-            if mvwprintw(self.main_window, 3, 1, &format!("Running: {:?}", status.running)) != 0 {
-                panic!("Failed mvprint");
-            }
-            if mvwprintw(self.main_window, 4, 1, &format!("Generation: {:?}", status.generation)) != 0 {
-                panic!("Failed mvprint");
-            }
-            if mvwprintw(self.main_window, 5, 1, &format!("Path: {}", status.path)) != 0 {
-                panic!("Failed mvprint");
-            }
-            redraw(self.main_window);
+            let projects:Vec<_> = vec!["Create", "Refresh Status",
+                                       "Analyse", "Configuration", "Utilise"];        
 
+            // Display status
+            // Name:Sting
+            // cleared:bool,
+            // running:bool,
+            // generation:usize,
+            // path:String,
+            let x_status = 1; // Start column for status
+            let mut y_status = 1; // Status lines
+            if wattron(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattron");
+            }
+            if mvwprintw(self.main_window, y_status, x_status, "Status") != 0 {
+                panic!("Failed mvwprintw");
+            }
+            y_status = y_status+2; // Leave a blank line
+            if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattroff");
+            }
+
+            if mvwprintw(self.main_window, y_status, x_status,
+                         &format!("Name: {}", name)) != 0 {
+                panic!("Failed mvprint");
+            }
+            y_status = y_status+1;
+            if mvwprintw(self.main_window, y_status, x_status, 
+                         &format!("Cleared: {:?}", status.cleared)) != 0 {
+                panic!("Failed mvprint");
+            }
+            y_status = y_status+1;
+            if mvwprintw(self.main_window, y_status, x_status, 
+                         &format!("Running: {:?}", status.running)) != 0 {      
+                panic!("Failed mvprint");
+            }
+            y_status = y_status+1;
+            if mvwprintw(self.main_window, y_status, x_status, 
+                         &format!("Generation: {:?}", status.generation)) != 0 {
+                panic!("Failed mvprint");
+            }
+            y_status = y_status+1;
+            if mvwprintw(self.main_window, y_status, x_status, 
+                         &format!("Path: {}", status.path)) != 0 {
+                panic!("Failed mvprint");
+            }
+            //y_status = y_status+1;
+
+            // Get configuration object (if running) to write a
+            // section on the files in the project's directory
+            let x_files = 30; // Starting column for files section
+            let mut y_files = 1;  // Each line...
+            if wattron(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattron");
+            }
+            if mvwprintw(self.main_window, y_files, x_files, "Files") != 0 {
+                panic!("Failed mvwprintw");
+            }
+            if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattroff");
+            }
+            y_files = y_files+2; // Leave a blank line
+            let config = match self.controller.get_config(name) {
+                Some(c) => // Got a handle to a thread running simulation
+                    c, 
+                None => {
+                    eprintln!("do_project default config");
+                    self.default_config(name)
+                },
+            };
+
+            
+            // Check if the file that describes a population is there
+            // save_file
+            let save_file = match config.get_string("save_file") {
+                Some(f) => f,
+                None => "<NONE>".to_string(),
+            };
+            let save_file_path = format!("{}Data/{}/{}",
+                                         self.root_dir, name, save_file);
+            let save_file_exists = Path::new(save_file_path.as_str()).is_file();
+            let save_file_exists = if save_file_exists {
+                eprintln!("Existing");
+                "Exists"
+            }else{
+                eprintln!("Not Existing {}", save_file_path);
+                ""
+            };
+            
+            let msg = format!("Trees: {} {}", save_file_exists, save_file);
+            if mvwprintw(self.main_window, y_files, x_files, msg.as_str()) != 0 {
+                panic!("Failed mvwprintw");
+            }
+
+            redraw(self.main_window);
 
             let c = self.make_menu(&projects);
             // Got a key.
@@ -143,17 +287,76 @@ impl FrontEnd {
 
                     // Use the controller o run the simulation.  If it
                     // fails to launch the status is set appropriately
-                    let status = match self.controller.run_simulation(config.copy()) {
+                    let status = match self.controller.run_simulation(&config) {
                         Ok(_) => "Ok".to_string(), 
                         Err(s) => s.to_string(),
                     };
                     self.status_line(&status);
                 },
+                3 => {
+                    // Analyse
+                },
+                4 => {
+                    // Display config
+                }
                 
                 _ => (),
             }
             
             
+        }
+    }
+
+    // End of rational ordering of functions....
+    //---------------------------------------------------------
+    
+    fn default_config(&self, name:&str) -> Config {
+
+        // Get the default configuration file for all simulatuons.  It
+        // is iin the root of the directory structure in file named
+        // ".gp_config".  Or not.  If not use a hard coded default
+        let mut config =
+            match File::open(format!("{}.gp_config", self.root_dir)){
+                Ok(f) => Config::new_file(f),
+                Err(_) => ConfigDefault::new(name),
+            };
+        
+        // Update the configuration file.  Find the project <name> and
+        // if it exists check for a ".gp_config" file.  If it is found
+        // use that to update the config.  If it does not then adjust
+        // some fields in the default: The root_dir may not be
+        // accurate as the file may have been moved, and the "name" is
+        // particular to a simulation
+        match self.find_project_config(name) {
+            Some(cfg) => {
+                eprintln!("default_config Found one");
+                for k in cfg.data.keys() {
+                    config.data.insert(k.to_string(),
+                                       cfg.data.get(k).unwrap().to_string());
+                }
+            },
+            None => {
+                eprintln!("default_config Found none");
+                
+                config.data.insert("root_dir".to_string(),
+                                   self.root_dir.clone());
+                config.data.insert("name".to_string(), name.to_string());
+            },
+        };
+        config
+    }
+
+    fn find_project_config(&self, name:&str) -> Option<Config> {
+        // If the named project exists and has a configuration file
+        // build a Config object and return it
+        let path = format!("{}Data/{}/.gp_config", self.root_dir, name);
+        let cfg_file = Path::new(path.as_str());
+        eprintln!("find_project_config {:?}", cfg_file);
+        if cfg_file.is_file() {
+            // A project configuration file exists
+            Some(Config::new(path.as_str()))
+        }else{
+            None
         }
     }
 
@@ -163,51 +366,6 @@ impl FrontEnd {
         
     // }
 
-    fn do_choose_object(&mut self){
-        // Get the root directory of the projects
-        let proj_dir = Path::new("./Data/");
-        self.status_line(&format!("Current Directory {:?}", env::current_dir()));
-
-        // Get the sub-directories that are projects
-        let mut projects:Vec<String> = Vec::new();
-        let entries = match fs::read_dir(proj_dir) {
-            Ok(v) => v,
-            Err(e) => {
-                let s = format!("Failed reading {:?} e: {} cd: {:?}", proj_dir.to_str(), e, env::current_dir());
-                fe_shut();
-                panic!(s);
-            }
-        };
-        for e in entries {
-            let p = e.unwrap().path();
-            let md = p.metadata().expect("metadata call failed");
-            if md.file_type().is_dir() {
-                // Projects are in sub directories
-                let sp = p.file_name().unwrap().to_str().unwrap().to_string();
-                projects.push(sp);
-            }
-        }
-
-        // Display the projects and wait for user to select one
-        let menu_vec:Vec<_> = projects.iter().zip(1..(1+projects.len())).map(|x| format!("{} {}", x.1, x.0)).collect();
-        
-        loop {
-            self.fe_main(&menu_vec);
-            let c = self.make_menu(&vec!["Enter choice", "Display Config", "Quit"] );
-            if c == 0 {
-                break;
-            }else if c <= menu_vec.len() {
-                let project = menu_vec.iter().nth(c-1).unwrap().clone();
-                self.status_line(&format!("Choose index {} project {}", c-1, &project));
-                self.do_project(&project);
-            }else if c == 0{
-                break;
-            }else{
-                self.status_line(&format!("Option {} not valid", c));
-            }
-        }    
-        
-    }
 
 
     fn fe_main(&self, list:&Vec<String>) {
@@ -222,48 +380,23 @@ impl FrontEnd {
         redraw(self.main_window);
     }
 
-    pub fn fe_start(&mut self) {
-        loop {
-            let c = self.make_menu(&vec!["Choose Project", "Display Config"] );
-            match c {
-                0 => break,
-                1 => self.do_choose_object(),
-                2 => self.do_display_config("<PROJECT NAME>"),
-                _ => panic!(),
-            }
-        }
-        fe_shut();
-    }
     
-    fn do_display_config(&self, name:&str)  {
-
-        let config = self.default_config(name);
-
-        let mut keys = config.data.keys();
-        let mut cfg_strings:Vec<String> = Vec::new();
-        for _ in 1..config.data.len() {
-            if let Some(key) = keys.next() {
-                let v = config.data.get(key).unwrap();
-                let item = format!("{}:\t{}", key, v);
-                cfg_strings.push(item);
-            }
-        }
-        self.fe_main(&cfg_strings);
-    }
-
     fn make_menu(&self, menu_items:&Vec<&str>) -> usize {
         werase(self.menu_window);
         //redraw(self.status_window);
         // eprintln!("make_menu");
         let mut x = 1; // Start of menu
         // werase(self.menu_window);
-        for i in 1..menu_items.len()+1 {
-            let s = menu_items.iter().nth(i-1).unwrap();
-            if mvwprintw(self.menu_window, 1, x, &format!("{} {}", i, &s)) != 0{
-                panic!("Failed mvwprint");
+        if menu_items.len() > 0 {
+            for i in 1..menu_items.len()+1 {
+                let s = menu_items.iter().nth(i-1).unwrap();
+                if mvwprintw(self.menu_window, 1, x,
+                             &format!("{} {}", i, &s)) != 0{
+                    panic!("Failed mvwprint");
+                }
+                eprintln!("make_menu {}", format!("{} {}", x, s));
+                x = x + s.len() as i32 + 3;
             }
-            eprintln!("make_menu {}", format!("{} {}", x, s));
-            x = x + s.len() as i32 + 3;
         }
         if mvwprintw(self.menu_window, 1, x, &format!("{} {}", 0, "Back")) != 0{
             panic!("Failed mvwprint");
@@ -282,6 +415,26 @@ impl FrontEnd {
         redraw(self.status_window);
     }
 
+    fn do_analysis_window(&self, pa:&PopulationAnalysis ){
+
+        // Normalise
+        // let total = self.population as f64;
+        // let total_classified = pa.correct as f64 + pa.incorrect as f64;
+        // let classified = (total_classified)/(total as f64);
+        // let correct = pa.correct/(total);
+        // let incorrect = pa.incorrect/(total);
+        // let false_positives:HashMap<String, f64> = HashMap::new();
+        // let false_negatives:HashMap<String, f64> = HashMap::new();
+        // for c in self.get_classes().iter() {
+        //     let count = *pa.counts.get(c.as_str()).unwrap() as f64;
+
+        //     let f_p = *pa.false_positives.get(c.as_str()).unwrap() as f64;
+        //     false_positives.insert(c, f_p / count);
+
+        //     let f_n = *pa.false_negatives.get(c.as_str()).unwrap();
+        //     false_negatives.insert(c, f_n / count);
+        // }
+    }
 }
 
 fn fe_shut(){
