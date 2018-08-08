@@ -128,7 +128,7 @@ impl Data {
         // Second is a row that indicates which columns are inputs and
         // which identify classes
         self.reset();
-        let file = File::open(f_name).unwrap();
+        let file = File::open(f_name).expect(format!("Could not open file: {}", f_name).as_str());
         let mut buf_reader = BufReader::new(file);
         let mut contents = String::new();
         buf_reader.read_to_string(&mut contents).unwrap();
