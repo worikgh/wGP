@@ -3,17 +3,17 @@
 // ith the handle plus any other information that may be useful (Root
 // directory of simulation, configuration object, time it started....)
 
-use std::time::Instant;
-use std::fs::File;
-use std::collections::hash_map::Entry::Occupied;
-use std::collections::hash_map::Entry::Vacant;
-use config_default::ConfigDefault;
 use config::Config;
-//use std::path::Path;
+use config_default::ConfigDefault;
 use population::Population;
 use std::collections::HashMap;    
+use std::collections::hash_map::Entry::Occupied;
+use std::collections::hash_map::Entry::Vacant;
+use std::fs::File;
+use std::path::Path;
 use std::sync::{Mutex, Arc};
 use std::thread;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub enum SimulationCommand {
@@ -63,11 +63,12 @@ impl Controller {
         // Get the project configuration and over write the defaults.
         // FIXME Should this be done here or in
         // Controller::run_simulation?
-        let proj_dir = format!("{}Data/", config.get_string("root_dir").unwrap());
+        let proj_dir = format!("{}/Data/", config.get_string("root_dir").unwrap());
         let cfg_fname = format!("{}{}/.gp_config", proj_dir, config.get_string("name").unwrap());
 
         let mut config = config.copy();
-        if let Ok(f) = File::open(cfg_fname.clone()) {
+        let path = Path::new(&cfg_fname);
+        if let Ok(f) = File::open(path) {
             let _cfg = Config::new_file(f);
             for key in _cfg.data.keys() {
                 // Over ride a default
@@ -118,7 +119,7 @@ impl Controller {
     }
     pub fn get_config(&mut self, proj_name:&str) -> Option<Config> {
         if let Occupied(entry)  = self.handles.entry(proj_name.to_string()) {
-            // FIXME If the simulation ever can rite to Config object
+            // FIXME If the simulation ever can write to Config object
             // this will need a lock
             Some(entry.get().2.copy())
         }else{
