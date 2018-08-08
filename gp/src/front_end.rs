@@ -17,6 +17,7 @@ enum State {
     DisplayConfig,
     ChooseProject,
     GotProject,
+    Refresh,
 }
 pub struct FrontEnd {
 
@@ -135,6 +136,78 @@ impl FrontEnd {
         }
         redraw(self.main_window);
     }
+
+    fn display_status(&mut self) {
+        assert!(self.project.is_some()); // Precondition
+        let name = self.project.as_ref().unwrap().as_str();
+        let x_status = 1; // Start column for status
+        let mut y_status = 1; // Status lines
+        
+        werase(self.main_window);
+
+        // Write header
+        if wattron(self.main_window, A_UNDERLINE()) != 0 {
+            panic!("Failed wattron");
+        }
+        if mvwprintw(self.main_window, y_status, x_status, "Status") != 0 {
+            panic!("Failed mvwprintw");
+        }
+        y_status = y_status+2; // Leave a blank line
+        if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+            panic!("Failed wattroff");
+        }
+
+        // Write project name
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Name: {}", name)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+
+        // Status
+        let status = &self.controller.get_status(name);
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Cleared: {:?}", status.cleared)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Running: {:?}", status.running)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Generation: {:?}", status.generation)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Path: {}", status.path)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+
+        // Get configuration object (if running) to write a
+        // section on the files in the project's directory
+        let x_files = 30; // Starting column for files section
+        let mut y_files = 1;  // Each line...
+        if wattron(self.main_window, A_UNDERLINE()) != 0 {
+            panic!("Failed wattron");
+        }
+        if mvwprintw(self.main_window, y_files, x_files, "Files") != 0 {
+            panic!("Failed mvwprintw");
+        }
+        if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+            panic!("Failed wattroff");
+        }
+        y_files = y_files+2; // Leave a blank line
+        if let Some(c)  =  self.controller.get_config(name) {
+            // Do something with c
+        }else{
+            eprintln!("do_project default config");
+        }
+        redraw(self.main_window);
+    }
     // End of functions to use ncurses top draw on screen
 
     fn read_projects(&self) -> BTreeMap<usize, String> {
@@ -167,24 +240,6 @@ impl FrontEnd {
             }
         }
         ret
-        // // Display the projects for user to select one
-        // let menu_vec:Vec<_> = projects.iter().zip(1..(1+projects.len())).map(|x| format!("{} {}", x.1, x.0)).collect();
-        // loop {
-        //     self.fe_main(&menu_vec);
-        //     let c = self.make_menu(&vec!["Enter Choice", "Display Config", "Quit"] );
-        //     if c == 0 {
-        //         break;
-        //     }else if c <= menu_vec.len() {
-        //         let project = projects.iter().nth(c-1).unwrap().clone();
-        //         self.status_line(&format!("Choose index {} project {}", c-1, &project));
-        //         self.do_project(&project);
-        //     }else if c == 0{
-        //         break;
-        //     }else{
-        //         self.status_line(&format!("Option {} not valid", c));
-        //     }
-        // }
-
     }
 
     // Functions to display user interface.  The interface displayed
@@ -193,6 +248,14 @@ impl FrontEnd {
         // Initial screen
         self.make_menu(&vec!["Choose Project", "Display Config"]);
         self.draw_main_splash();
+        true
+    }
+
+    fn project_screen(&mut self) -> bool {
+        // Initial screen
+        self.make_menu(&vec!["Create", "Refresh Status", "Analyse", "Configuration", "Utilise"]);
+        
+        self.display_status();
         true
     }
 
@@ -232,9 +295,10 @@ impl FrontEnd {
         // eprintln!("update_display {:?} stack size: {}", state, self.state.len());
         match state {
             State::Starting => self.start_screen(),
+            State::Refresh => true,
             State::Stopped => true,
             State::DisplayConfig => true,
-            State::GotProject => true,
+            State::GotProject => self.project_screen(),
             State::ChooseProject => {
                 self.projects = Some(self.read_projects());
                 self.choose_project_screen()
@@ -268,6 +332,7 @@ impl FrontEnd {
                 }
             }
         }
+        
         let ret = match state {
             State::Starting => {
 
@@ -281,9 +346,22 @@ impl FrontEnd {
                 }
                 true
             },
+            State::Refresh => {
+                // Pop Refresh off state stack and recurse
+                self.state.pop();
+                self.state_transition()
+            },
             State::Stopped => true,
             State::DisplayConfig => true,
-            State::GotProject => true,
+            State::GotProject => {
+                if let Some(key) = self.inp {
+                    if let Some(s) = self.handle_key(key, state) {
+                        self.state.push(s);
+                    }
+                    self.inp = None; // Consume
+                }
+                true
+            },
             State::ChooseProject => {
                 // Get the key pressed....
                 if let Some(key) = self.inp {
@@ -306,8 +384,10 @@ impl FrontEnd {
     }
 
     // State transition functions.  Called with state
-    fn handle_key(&self, key:usize, state:State) -> Option<State>{
-        match state {
+
+    
+fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
+    match state {
             State::Starting => match key {
                 1 => {
                     // Choose project
@@ -329,9 +409,55 @@ impl FrontEnd {
                     // Invalid key
                     None
                 }
-
             },
-            _ => None,
+            State::GotProject => {
+                eprintln!("handle_key {} {:?} Start", key, state);
+                // Check the input
+                if let Some(c) = self.inp {
+                    // Got a key
+                    eprintln!("handle_key {} {:?} Got key {}", key, state, c);
+                    match c {
+                        1 => {
+                            // Run a simulation.  Start by build a
+                            // configuration object.  This is top
+                            // level configuration that can be
+                            // overridden by project configuration
+                            // First load default data.  Either in the
+                            // root_dir/.gp_config or hard coded
+                            // DefaultConfig
+                            let name = self.project.as_ref().unwrap();
+                            eprintln!("run {}", name);
+                            let config = self.default_config(name.as_str());
+
+                            // Use the controller o run the simulation.  If it
+                            // fails to launch the status is set appropriately
+                            let status = match self.controller.run_simulation(&config) {
+                                Ok(_) => format!("{} started", name),
+                                Err(s) => s.to_string(),
+                            };
+                            eprintln!("runing? {}", name);
+                            self.status_line(&status);
+                            None
+                        },
+                        2 => Some(State::Refresh),
+                        3 => {
+                            // Analyse
+                            None
+                        },
+                        4 => {
+                            // Display config
+                            None
+                        },
+                        _ => None,
+                    };
+                    None
+                }else{
+                    None
+                }
+            },
+            State::Stopped => None,
+            State::DisplayConfig => None,
+            State::Refresh => None,
         }
     }
     // End of state transition functions.
@@ -351,7 +477,6 @@ impl FrontEnd {
                 break;
             }
             self.status_line(&format!("State: {:?}", self.current_state()));
-            eprintln!("After transition State {:?} stack size: {}", state, self.state.len());
         }
         fe_shut();
     }
@@ -623,6 +748,7 @@ impl FrontEnd {
             panic!("Failed mvwprint");
         }
         redraw(self.status_window);
+        eprintln!("status line: {}", msg);
     }
 
     fn do_analysis_window(&self, pa:&PopulationAnalysis ){
