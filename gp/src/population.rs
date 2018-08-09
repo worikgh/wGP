@@ -1,24 +1,26 @@
+
 use config::Config;
+use controller::SimulationCommand;
+use controller::SimulationStatus;
+use fs2::FileExt;
+use inputs::Inputs;
 use node::Node;
 use node::NodeBox;
 use rng;
-
-use controller::SimulationCommand;
-use std::collections::hash_map::Entry::Vacant;
-use controller::SimulationStatus;
-use std::thread;
-use std::sync::{Mutex, Arc};
-use fs2::FileExt;
-use inputs::Inputs;
 use score::Score;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;    
 use std::collections::HashMap;    
+use std::collections::btree_map::Entry;
+use std::collections::hash_map::Entry::Vacant;
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
+use std::io::prelude::*;
+use std::path::Path;
+use std::sync::{Mutex, Arc};
+use std::thread;
 use super::Data;
 use super::Recorder;
 use super::score_individual;
@@ -93,13 +95,28 @@ impl Forest {
         self.score_trees.clear();
         self.maxid = 0;
     }
+    fn _check_sz(&self) -> i32 {
+        // Return number of trees in self.trees - number in score_trees
+        self.trees.len() as i32 - self.score_trees.iter().fold(0, |mut sum, x| {sum += x.1.len(); sum})  as i32
+    }
     fn insert(&mut self, str_rep:&str, tree:Tree) {
-        self.trees.insert(str_rep.to_string(), tree.clone());
-        let v = self.score_trees.entry(tree.score).or_insert(Vec::new());
-        v.push(str_rep.to_string());
-        if tree.id > self.maxid {
-            self.maxid = tree.id;
-        }
+        // Check for duplicates
+        match self.trees.get(str_rep){
+            None => {
+                self.trees.insert(str_rep.to_string(), tree.clone());
+                let v = self.score_trees.entry(tree.score).or_insert(Vec::new());
+                v.push(str_rep.to_string());
+
+                
+                if tree.id > self.maxid {
+                    self.maxid = tree.id;
+                }
+            },
+            Some(_) => {
+                panic!("Inserting a duplicate tree");
+            },
+        };
+        assert!(self._check_sz() == 0);
     }
     fn has_tree_str(&self, t:&str) -> bool {
         self.trees.contains_key(t)
@@ -119,16 +136,22 @@ impl Forest {
         // tree and delete it
         let v:Vec<String>;
         {
+            // Get the vector holding trees with this score
             let _v = self.score_trees.get(&tree.score).unwrap();
-            v = _v.iter().filter(|s| **s == str_rep).
+
+            // Remove the tree from the array 
+            v = _v.iter().filter(|s| **s != str_rep).
                 map(|x| x.to_string()).collect();
         }
+
+        // Update the vector of trees in score_trees
         if v.len() != 0 {
             self.score_trees.insert(tree.score.clone(), v);
         }else{
             // If that is the last tree with this score
             self.score_trees.remove(&tree.score).unwrap();
         }
+        
         ret
     }
     #[allow(dead_code)]
@@ -220,23 +243,23 @@ impl PopulationConfig {
     fn new(config:&Config) -> PopulationConfig {
 
         PopulationConfig {
-            seed:config.get_string("seed").unwrap().split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect(),
-            num_generations:config.get_usize("num_generations").unwrap(),
-            crossover_percent:config.get_usize("crossover_percent").unwrap(),
-            mutate_prob:config.get_usize("mutate_prob").unwrap(),
-            copy_prob:config.get_usize("copy_prob").unwrap(),
-            max_population:config.get_usize("max_population").unwrap(),
-            filter:config.get_usize("filter").unwrap(),
+            seed:config.get_string("seed").expect("Could not find seed").split_whitespace().
+                map(|x| x.parse::<u32>().expect("Could not parse seed")).collect(),
+            num_generations:config.get_usize("num_generations").expect("Could not find num_generations"),
+            crossover_percent:config.get_usize("crossover_percent").expect("Could not find crossover_percent"),
+            mutate_prob:config.get_usize("mutate_prob").expect("Could not find mutate_prob"),
+            copy_prob:config.get_usize("copy_prob").expect("Could not find copy_prob"),
+            max_population:config.get_usize("max_population").expect("Could not find max_population"),
+            filter:config.get_usize("filter").expect("Could not find filter"),
 
-            birthsanddeaths_file:config.get_string("birthsanddeaths_filename").unwrap(),
-            generations_file:config.get_string("generations_file").unwrap(),
-            save_file:config.get_string("save_file").unwrap(),
+            birthsanddeaths_file:config.get_string("birthsanddeaths_filename").expect("Could not find birthsanddeaths_file"),
+            generations_file:config.get_string("generations_file").expect("Could not find generations_file"),
+            save_file:config.get_string("save_file").expect("Could not find save_file"),
 
             rescore:match config.get_usize("filter") {
                 Some(r) => match r {
                     0 => false,
-                    1 => true,
-                    _ => panic!("Invalid value for {}: {}", "filter", r)
+                    _ => true,
                 },
                 None => false, // default
             },
@@ -282,7 +305,16 @@ impl Population {
 
         let forest = Forest::new();
 
-        let data_file = config.get_string("data_file").unwrap() ;
+        // FIXME Details about directory structure of simulations is
+        // hard coded here, there and everywhere
+        let data_file = format!("{}/Data/{}/{}",
+                                config.get_string("root_dir").expect("No root_dir in config"),
+                                config.get_string("name").expect("No name in config"),
+                                config.get_string("data_file").expect("No data_file in config"));
+
+        if !Path::new(data_file.as_str()).exists() {
+            panic!("Data file: {} does not exist", data_file);
+        }
         let training_percent = config.get_usize("training_percent").unwrap();
         let d_all = Data::new(&data_file, training_percent);
 
@@ -658,14 +690,13 @@ impl Population {
         // number of crossovers to do is (naturally) population.len()
         // * crossover_percent/100
         let ncross = (forest.trees.len() * crossover_percent)/100;
-        
         let mut nc = 0;
         while nc < ncross  {
 
             let (nb, l, r) = Population::_do_crossover(&forest);
 
             let st = (*nb).to_string();
-            if !forest.has_tree_nb(&nb) {
+            if !new_forest.has_tree_nb(&nb) {
 
                 // A unique child in next generation
                 let sc = score_individual(&nb, d_all, true);
@@ -722,7 +753,7 @@ impl Population {
 
                     // Unique in the new population
                     let t = forest.trees.get(st).unwrap();
-                    new_forest.trees.insert(st.to_string(), t.clone()).unwrap();
+                    new_forest.insert(st, t.clone());
                     cp += 1;
                     if cp == ncp  {
                         break;
@@ -739,7 +770,6 @@ impl Population {
         
         // Eliminate all trees with no valid score and sort them 
         new_forest = Population::_cull_sort(&new_forest, bnd_rec);
-
         // Adjust population
         // let mut n1 = 0; // Number of individuals deleted
         // let mut n2 = 0; // Number of individuals added
@@ -747,7 +777,6 @@ impl Population {
             Population::_delete_worst(&mut new_forest, bnd_rec);
             //n1 += 1;
         }
-
         let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
         while new_forest.trees.len() < max_population {
             while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
@@ -770,12 +799,14 @@ impl Population {
         // FIXME save_trees must be independant of Population for
         // thread safety
         Population::_save_trees(&new_forest, save_file);
+        assert!(new_forest._check_sz() == 0);
         new_forest 
     }
     
     pub fn new_generation(&mut self, generation:usize){
 
         // Call every generation
+        // FIXME  Do not do this every generation
         let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
         let new_forest = Population::_new_generation(&mut self.forest,
                                                      self.pop_config.mutate_prob,
@@ -854,7 +885,7 @@ impl Population {
         ret.maxid = forest.maxid;
         for (k, v) in forest.trees.iter() {
             if v.score.is_finite() {
-                ret.trees.insert(k.to_string(), v.clone()).unwrap();
+                ret.insert(k, v.clone());
             }else{
                 bnd_rec.write_line(
                     &format!("RIP {} culled", v.id)
@@ -1007,7 +1038,6 @@ impl Population {
     fn _delete_worst(forest:&mut Forest, bnd_rec:&mut Recorder) {
 
         // Delete a tree from the forest that has the worst score
-
         let t:String; // String rep of tree to delete
         {
             // Get the worst score
@@ -1021,12 +1051,13 @@ impl Population {
         }
         // t is the string representation of the tree
 
-        // Get the id so e can rite a record
+        // Get the id so e can write a record
         let id = forest.trees.get(&t).unwrap().id;
         bnd_rec.write_line(&format!("RIP {} culled", id));
         
         // Delete it
         forest.delete_str(t.as_str());
+        assert!(forest._check_sz() == 0);
                                 
         
     }
