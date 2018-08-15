@@ -11,7 +11,7 @@ use score::Score;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;    
 use std::collections::HashMap;    
-use std::collections::btree_map::Entry;
+//use std::collections::btree_map::Entry;
 use std::collections::hash_map::Entry::Vacant;
 use std::fs::File;
 use std::io::BufReader;
@@ -35,10 +35,10 @@ struct Tree {
 } 
 
 
-type ScoreTreeMap = BTreeMap<Score, Vec<String>>;
+//type ScoreTreeMap = BTreeMap<Score, Vec<String>>;
 
 #[derive(Clone)]
-struct Forest {
+pub struct Forest {
     // Store trees in a Hash keyed by the string representation of the
     // tree
     trees:HashMap<String, Tree>,
@@ -47,7 +47,7 @@ struct Forest {
     // Map score to trees so it is easy to find best and worst.  Store
     // the string representation and beware of trees with same
     // score...  Hence the vector
-    score_trees:ScoreTreeMap,
+    score_trees:BTreeMap<Score, Vec<String>>,
 
     // Each tree in the forest has a unique id.
     maxid:usize,
@@ -56,30 +56,6 @@ struct Forest {
     // current:Option<<BTreeMap<Score, Vec<String>> as Iterator>::Item>,
 }
 
-// impl Iterator for Forest {
-//     // Iterate over all trees in score order
-//     type Item = Tree;
-//     fn next(&mut self) -> Option<Self::Item> {
-//         match self.current {
-//             None => {
-//                 // First call
-//                 self.current = self.score_trees.iter().first();
-//                 match self.current {
-//                     None => // No trees...
-//                         None,
-//                     Some(_, t) => {
-//                         self.currrent = self.current.next();
-//                         t
-//                     },
-//                 }
-//             },
-//             Some(_, t) => {
-//                 self.currrent = self.current.next();
-//                 t
-//             },
-//         }
-//     }
-// }
 
 impl Forest {
     fn new() -> Forest {
@@ -267,35 +243,58 @@ impl PopulationConfig {
     }
 }
 
-pub struct PopulationAnalysis<'a> {
+#[derive(Debug, Clone)]
+pub struct PopulationAnalysis {
     // Stores a analysis of the population
 
     // Over all count of miss-classifications
-    incorrect:usize,    
+    pub incorrect:usize,    
 
     // Over all count of correct classifications
-    correct:usize,    
+    pub correct:usize,    
 
     // Number classified (Total 
-    classified:usize,
+    pub classified:usize,
 
-    // Total population
-    population:usize,
+    // Total number of cases tested
+    pub cases:usize,
     
     // The names of classes are owned by the Data object owned by the
     // Population object
 
     // False positives by class
-    false_positives:HashMap<&'a str, usize>,
+    pub false_positives:HashMap<String, usize>,
 
     // False negatives by class
-    false_negatives:HashMap<&'a str, usize>,
+    pub false_negatives:HashMap<String, usize>,
 
     // Count examples of a class to normalise the other parameters
-    counts:HashMap<&'a str, usize>,
+    pub counts:HashMap<String, usize>,
+
+    // Generation that this analysis as done
+    pub generation:usize,
 
 }    
-
+impl PopulationAnalysis {
+    fn new(classes:&Vec<String>) -> PopulationAnalysis {
+        let mut ret =  PopulationAnalysis {
+            incorrect:0,
+            correct:0,  
+            false_positives:HashMap::new(), 
+            false_negatives:HashMap::new(),
+            counts:HashMap::new(),
+            classified:0,
+            cases:0,
+            generation:0,
+        };
+        for c in classes.iter() {
+            ret.counts.insert(c.clone(), 0);
+            ret.false_positives.insert(c.clone(), 0);
+            ret.false_negatives.insert(c.clone(), 0);
+        }
+        ret
+    }
+}
 impl Population {
 
     pub fn new(config:&Config) -> Population {
@@ -328,42 +327,20 @@ impl Population {
 
         Population{
             forest,
-
             d_all,
             pop_config,
         }
         
     }
 
-    // pub fn config(&mut self, config:Config) {
-    //     // First get the mode of the run
-    //     self.copy_prob = config.get_usize("copy_prob").unwrap();
-    //     self.crossover_percent = config.get_usize("crossover_percent").unwrap();
-    //     self.max_population = config.get_usize("max_population").unwrap();
-    //     self.mutate_prob = config.get_usize("mutate_prob").unwrap();
-
-    //     self.filter = config.get_usize("filter").unwrap_or(0);
-    //     self.rescore =  match config.get_string("rescore") {
-    //         Some(x) =>
-    //         // A string.  Must be valid usize.  If it is 0 then false 
-    //             if x.parse::<usize>().unwrap() == 1 {
-    //                 true
-    //             }else if x.parse::<usize>().unwrap() == 0 {
-    //                 false
-    //             }else{
-    //                 panic!("Invalid rescore: {}", x)
-    //             },
-    //         None => false // Default
-    //     }
-    // }
 
     pub fn initialise_rand(&mut self){
         // Initialise with a random tree
+        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
         loop {
 
             // Random individual.  'add_individual' returns true when
             // a unique individual is created.
-            let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
             while !self.add_individual(&mut bnd_rec) {} 
 
             if self.len() == self.pop_config.max_population {
@@ -380,10 +357,9 @@ impl Population {
         self.forest = self.restore_trees();
     }
     
-    pub fn run_in_thread(&mut self, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
+    pub fn run_in_thread(&mut self,
+                         a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
 
-        // Initialise a random population
-        self.initialise_rand();
         
         // FIXME There should be a idiomatic Rust way to do this
         let mut forest = self.forest.clone(); 
@@ -417,8 +393,24 @@ impl Population {
                 let mut ps = a.lock().unwrap();
                 (*ps).running = true;
             }
-            let mut command:SimulationCommand;
             let mut generation = 0;
+
+            // If the forrest has no trees initialise it
+            // Initialise a random population
+            if forest.trees.len() == 0 {
+                eprintln!("B4 _initialise_rand");
+                _initialise_rand(&mut forest, &d_all, &mut bnd_rec, max_population);
+                eprintln!("After _initialise_rand");
+            }else{
+                eprintln!("Not calling _initialise_rand");
+            }                
+            
+            let mut command = SimulationCommand::Empty;
+
+
+            // If a simulation is paused to run another command set this flag
+            let mut paused = false;  
+
             loop {
 
                 // Main loop
@@ -426,15 +418,35 @@ impl Population {
                     // Update status.  We are running
                     let mut ps = a.lock().unwrap();
                     (*ps).generation = generation;
-                    command = (*ps).command.clone();
-                    (*ps).command = SimulationCommand::Empty;
+
+                    let _command = (*ps).command.clone();
+
+                    if _command != command {
+                        if command == SimulationCommand::Simulate {
+                            // A simulation is being paused
+                            paused = true;
+                        }
+                        command = _command;
+                    }                          
                 }
                 
                 match  command {
                     SimulationCommand::Analyse => {
-                        command = SimulationCommand::Empty;
+                        eprintln!("SimulationCommand::Analyse");
+                        let mut pa = analyse(&forest, &d_all);
+                        pa.generation = generation;
+                        let mut ps = a.lock().unwrap();
+                        (*ps).analysis = Some(pa);
+                        (*ps).command = if paused {
+                            // A simulation is paused
+                            SimulationCommand::Simulate
+                        }else{
+                            SimulationCommand::Empty
+                        };
+
                     },
-                    SimulationCommand::Empty => {
+                    SimulationCommand::Empty => return,
+                    SimulationCommand::Simulate => {
                         forest = 
                             Population::_new_generation(&forest, mutate_prob, copy_prob,
                                                         crossover_percent,
@@ -445,14 +457,17 @@ impl Population {
                     },
                 };
                 // Update the status structure and check if caller has
-                // decided to shut this thread down
+                // decided to shut this thread down and maintain the
+                // population field of status
                 let mut ps = a.lock().unwrap();
+                (*ps).population = forest.count();
                 (*ps).generation = generation;
                 
                 if ps.cleared == false ||
                     generation == num_generations  {
                         
-                        // Caller wants us to stop
+                        // Caller wants us to stop orthere has been
+                        // enough generations
                         ps.running = false;
                         break;
                     }
@@ -462,9 +477,8 @@ impl Population {
                 // Update status.  We are not running
                 let mut ps = a.lock().unwrap();
                 (*ps).running = false;
-            }
-
-            
+                (*ps).command = SimulationCommand::Empty;
+            }            
         })
     }
 
@@ -498,171 +512,12 @@ impl Population {
         self.forest.trees.len()
     }
 
-    fn classify(&self, case:&Vec<f64>) -> Option<(&str, String)> {
-        // Classify a case using the population.  @param `case` is the
-        // case to classify. The first &str in the pair returned is
-        // the class from self.d_all and the second part lists the
-        // classes in desending order of estimated liklihood along
-        // with the calculated liklihood
-
-        // Create the input structure
-        let mut input = Inputs::new();
-        for j in 0..self.d_all.input_names.len() {
-            let v:f64 = case[j];
-            input.insert(&self.d_all.input_names[j], v);
-        }
-
-        // Store the results of each classifier.  The class of the
-        // classifier is used as the key and keep each result and the
-        // score/quality.  FIXME Make key &str
-        let mut results:HashMap<&String, Vec<(f64,f64)>> = HashMap::new();
-        for c in self.d_all.class_names.iter() {
-            results.insert(c, Vec::new());
-        }
-
-        // Ask each classifier what it thinks of the case.  Each one
-        // is specialised to detect a particular class.  If a
-        // classifier thinks the case is of the class it is
-        // specialised for it returns 1.0.  Else -1.0.  The values are
-        // stored in the results hash.  If the classifier cannot make
-        // a decision it will not return a finite score
-        for (_, t) in self.forest.trees.iter() {
-            // Using each classifier
-            let class = &t.score.class;
-
-            // Given a input of class C and a tree (t) whose class is
-            // D if C == D then score should be 1.0.  Else -1.0.  
-            let score = t.tree.evaluate(&input).unwrap();
-            if score.is_finite() {
-                // Score::special is from training and is how well this
-                // rule performed over all training cases.
-                let quality = t.score.special;
-                results.get_mut(class).unwrap().push((quality, score));
-            }
-        }
-
-        // Interpretation of results.  The class with the highest
-        // score, weighted by the quality (score.special in
-        // results{<class>}[<index>].0) and divided by the count of
-        // classifiers, is the class to choose.  The magnitude of the
-        // score relative to how many classifiers contributed is a
-        // measure of quality of classification.  As is the score for
-        // other classes.  FIXME for clarity!
-
-        let mut scores:Vec<(&str, f64)> = Vec::new();
-
-        // Set this if at leaset one class had some finite results
-        let mut flag = false; 
-
-        for k in self.d_all.class_names.iter() {
-
-            let count = results.get(k).unwrap().len();
-            let score = match count {
-                0 => 0.0, // No finite results
-                _ => {
-                    flag = true; 
-                    results.get(k).unwrap().
-                        iter().fold(0.0, |mut sum, &x| {
-                            // x.0 is the quality from training for
-                            // this rule.  x.2 is ideally -1.0 if the
-                            // case is not of the rules class and 1.0
-                            // if it is of the rules class.
-                            sum += x.0*x.1; sum
-                        })  / (count  as f64)
-                },
-            };
-            // For each class...
-            scores.push((k.as_str(), score));
-        }
-
-
-        // Check case of all scores being 0.0
-        if !flag {
-            // This case cannot be classified
-            None
-        }else{
-            scores.sort_by(|a,b| {
-                let a1 = &a.1;
-                let b1 = &b.1;
-                b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
-            });
-
-            // The return value.  ret.0 is the predicted class ret.1
-            // stores information for all classes in a string.
-            // "<class> <score>..." in descending score order
-            let mut ret = (scores.first().unwrap().0, String::new());
-            for s in scores {
-                ret.1 += format!("{} {} ", s.0, // Class
-                                 s.1.to_string() // Score
-                ).as_str();
-            }
-            Some(ret)
-        }
+    fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
+        classify(case, &self.d_all.input_names, &self.d_all.class_names, &self.forest)
     }
 
     pub fn analyse(&self) -> PopulationAnalysis {
-
-        // Indexes for  data that is used for testing
-        let ref index = self.d_all.testing_i;
-        
-
-        // Build a object that describes the quality of the
-        // classifiers, as a set, over the test data
-        let mut pa = PopulationAnalysis {
-            incorrect:0, // Proportion of incorrect classifications
-            correct:0,   // Proportion of correct classifications
-
-            // Per class proportion of classifications incorrrectly
-            // into that class
-            false_positives:HashMap::new(), 
-
-            // Per class proportion of classifications incorrrectly
-            // into another class
-            false_negatives:HashMap::new(),
-            counts:HashMap::new(),
-
-            // The proportion of cases classified
-            classified:0,
-
-            // The total number of cases
-            population:index.len(),
-        };            
-
-        // Initialise counts 
-        self.get_classes().iter().map(|x| pa.counts.insert(x, 0));
-        
-        // Over the testing data clasify each record and compare with true
-        // class
-        for i in index {
-            let ref r = self.d_all.data[*i];
-            if let Some((s, _)) = self.classify(r){ 
-                // s is estimated class. 
-
-                // The actual class
-                let c = self.d_all.get_class(*i);
-
-                // Record how many instances of this class are seen
-                let _c = *pa.counts.get(c).unwrap();
-                pa.counts.insert(c, _c + 1);
-                
-                // Check if estimated class is correct.
-                if s != c {
-                    pa.incorrect = pa.incorrect + 1;
-                    let fp = *pa.false_positives.get_mut(s).unwrap();
-                    let nn = *pa.false_negatives.get_mut(c).unwrap();
-                    pa.false_positives.
-                        insert(s, fp + 1).
-                        unwrap();
-                    pa.false_negatives.
-                        insert(&c, nn + 1).
-                        unwrap();
-                }else{
-                    pa.correct = pa.correct + 1;
-                }
-            }//老虎
-        }
-        
-        pa
+        analyse(&self.forest, &self.d_all)
     }
 
     // FIXME Refactor this so it calls a standalone function which can
@@ -704,7 +559,7 @@ impl Population {
                 new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
                 new_forest.maxid = id;
                 bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
-                                            l, r, id, &sc.special, st));
+                                            l, r, id, &sc.quality, st));
             }
             nc += 1;
         }
@@ -735,7 +590,7 @@ impl Population {
                     let id = new_forest.maxid;
                     new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
                     bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
-                                               id0, new_forest.maxid, st, &sc.special).as_str());
+                                               id0, new_forest.maxid, st, &sc.quality).as_str());
                 }                
             }
         }
@@ -821,7 +676,7 @@ impl Population {
         let s = format!("{} {} {} {} {}",
                         generation,
                         self.best_id(),
-                        self.best_score().special,
+                        self.best_score().quality,
                         self.len(),
                         self.get_tree_id(self.best_id()).tree.to_string());
         // Set up output file to record each generation:  FIXME move this to population
@@ -835,7 +690,7 @@ impl Population {
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
         for (_, v) in forest.trees.iter() {
-            if !v.score.special.is_finite() {
+            if !v.score.quality.is_finite() {
                 ret = false;
                 break;
             }
@@ -1011,8 +866,8 @@ impl Population {
                        bnd_rec:&mut Recorder,
                        forest:&mut Forest) -> bool {
         
-        // Add a individuall.  If the individual is already in the
-        // population do not add it and return false
+        // Add a random individuall.  If the individual is already in
+        // the population do not add it and return false
         let n = Box::new(Node::new(&d_all.input_names, 0));
 
         let st = n.to_string();
@@ -1023,7 +878,7 @@ impl Population {
 
             let sc = score_individual(&n, d_all, true);
             {
-                bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.special, n.to_string()));
+                bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.quality, n.to_string()));
             }
             forest.insert(&st, Tree{id:id, score:sc, tree:n});
             forest.maxid = id;
@@ -1224,12 +1079,12 @@ impl Population {
                                 // Reevaluate the trees against the
                                 // test part of the data
                                 let _sc = score_individual(&node, &self.d_all, true);
-                                //println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.special);
+                                //println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.quality);
                                 _sc
                                     
                             }else{
                                 // Use the saved scores
-                                Score{class:class, special:score}
+                                Score{class:class, quality:score}
                             };
                             let id = trees.maxid + 1;
                             trees.insert(strep, Tree{id:id, tree:node, score:sc});
@@ -1244,8 +1099,8 @@ impl Population {
 
             // // First sort trees by score and length
             // trees.sort_by(|a, b|{
-            //     let a1 = &a.score.special;
-            //     let b1 = &b.score.special;
+            //     let a1 = &a.score.quality;
+            //     let b1 = &b.score.quality;
             //     match b1.partial_cmp(a1) {
             //         Some(x) => match x {
             //             Ordering::Equal => a.tree.count_nodes().cmp(&b.tree.count_nodes()),
@@ -1291,40 +1146,188 @@ impl Population {
         
         let mut state = String::new();
         for (s, t) in forest.trees.iter() {
-            state += &format!("Class{}Score{}Node{}\n", t.score.class, t.score.special,s);
+            state += &format!("Class{}Score{}Node{}\n", t.score.class, t.score.quality,s);
         }
 
+        // FIXME This is not in correst directory
         let file = File::create(save_file).unwrap();
         file.lock_exclusive().expect("Failed to lock save file");
 
-        let mut buf = BufWriter::new(file);
-        buf.write(&state.into_bytes()[..]).unwrap();
     }
     
     pub fn save_trees(&self){
         Population::_save_trees(&self.forest, self.pop_config.save_file.as_str())
         
     }
-}    
+}
+
+pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
+                class_names:&Vec<String>, forest:&Forest) ->
+    Option<(String, String)> {
+        // Classify a case using the population.  @param `case` is the
+        // case to classify. @param `input_names` is names of the
+        // independant variables.  @param `class_names` is names of
+        // classes
+
+        // The first String in the pair returned is the class and the
+        // second part lists the classes in desending order of
+        // estimated liklihood along with the calculated liklihood
+        // Create the input structure
+        let mut input = Inputs::new();
+        for j in 0..input_names.len() {
+            let v:f64 = case[j];
+            input.insert(&input_names[j], v);
+        }
+
+        // Store the results of each classifier.  The class of the
+        // classifier is used as the key and keep each result and the
+        // score/quality. 
+        let mut results:HashMap<&String, Vec<(f64,f64)>> = HashMap::new();
+        for c in class_names.iter() {
+            results.insert(c, Vec::new());
+        }
+
+        // Ask each classifier what it thinks of the case.  Each one
+        // is specialised to detect a particular class.  If a
+        // classifier thinks the case is of the class it is
+        // specialised for it returns 1.0.  Else -1.0.  The values are
+        // stored in the results hash.  If the classifier cannot make
+        // a decision it will not return a finite score
+        for (_, t) in forest.trees.iter() {
+            // Using each classifier
+            let class = &t.score.class;
+
+            // Given a input of class C and a tree (t) whose class is
+            // D if C == D then score should be 1.0.  Else -1.0.  
+            let score = t.tree.evaluate(&input).unwrap();
+            if score.is_finite() {
+                // Score::special is from training and is how well this
+                // rule performed over all training cases.
+                let quality = t.score.quality;
+                results.get_mut(class).unwrap().push((quality, score));
+            }
+        }
+
+        // Interpretation of results.  The class with the highest
+        // score, weighted by the quality (score.quality in
+        // results{<class>}[<index>].0) and divided by the count of
+        // classifiers, is the class to choose.  The magnitude of the
+        // score relative to how many classifiers contributed is a
+        // measure of quality of classification.  As is the score for
+        // other classes.  FIXME for clarity!
+
+        let mut scores:Vec<(&str, f64)> = Vec::new();
+
+        // Set this if at leaset one class had some finite results
+        let mut flag = false; 
+
+        for k in class_names.iter() {
+
+            let count = results.get(k).unwrap().len();
+            let score = match count {
+                0 => 0.0, // No finite results
+                _ => {
+                    flag = true; 
+                    results.get(k).unwrap().
+                        iter().fold(0.0, |mut sum, &x| {
+                            // x.0 is the quality from training for
+                            // this rule.  x.2 is ideally -1.0 if the
+                            // case is not of the rules class and 1.0
+                            // if it is of the rules class.
+                            sum += x.0*x.1; sum
+                        })  / (count  as f64)
+                },
+            };
+            // For each class...
+            scores.push((k.as_str(), score));
+        }
 
 
-// pub fn run_in_thread(config:&Config, a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()> {
-//     // Load the data
+        // Check case of all scores being 0.0
+        if !flag {
+            // This case cannot be classified
+            None
+        }else{
+            scores.sort_by(|a,b| {
+                let a1 = &a.1;
+                let b1 = &b.1;
+                b1.partial_cmp(a1).unwrap_or(Ordering::Equal)
+            });
+
+            // The return value.  ret.0 is the predicted class ret.1
+            // stores information for all classes in a string.
+            // "<class> <score>..." in descending score order
+            let mut ret = (scores.first().unwrap().0.to_string(), String::new());
+            for s in scores {
+                ret.1 += format!("{} {} ", s.0, // Class
+                                 s.1.to_string() // Score
+                ).as_str();
+            }
+            Some(ret)
+        }
+    }
+
+pub fn analyse(forest:&Forest, d_all:&Data) -> PopulationAnalysis {
+
+    let ref index = d_all.testing_i;
     
-//     let pop_config = PopulationConfig::new(&config);
 
-//     let forest = Forest::new();
+    // Build a object that describes the quality of the
+    // classifiers, as a set, over the test data
+    let mut pa = PopulationAnalysis::new(&d_all.class_names);            
 
-//     let data_file = config.get_string("data_file").unwrap() ;
-//     let training_percent = config.get_usize("training_percent").unwrap();
-//     let d_all = Data::new(&data_file, training_percent);
+    // Initialise counts 
+    for x in d_all.class_names.iter() {
+        pa.counts.insert(x.to_string(), 0);
+    }
+    
+    // Over the testing data clasify each record and compare with true
+    // class
+    for i in index {
+        pa.cases = pa.cases + 1;
+        let ref r = d_all.data[*i];
+        if let Some((s, _)) = classify(r, &d_all.input_names, &d_all.class_names, forest){ 
+            // s is estimated class. 
+            pa.classified = pa.classified + 1;
+            // The actual class
+            let c = d_all.get_class(*i);
 
+            // Record how many instances of this class are seen
+            let _c = *pa.counts.get(c).unwrap();
+            let pa_class = c.to_string();
+            pa.counts.insert(pa_class.clone(), _c + 1);
+            
+            // Check if estimated class is correct.
+            if s != c {
+                pa.incorrect = pa.incorrect + 1;
+                let fp = *pa.false_positives.get_mut(s.as_str()).unwrap();
+                let nn = *pa.false_negatives.get_mut(c).unwrap();
+                pa.false_positives.
+                    insert(pa_class.clone(), fp + 1).
+                    unwrap();
+                pa.false_negatives.
+                    insert(pa_class, nn + 1).
+                    unwrap();
+            }else{
+                pa.correct = pa.correct + 1;
+            }
+        }//老虎
+    }
+    pa
+}
 
-//     // Write the header for the generaion file
-//     let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-//     let  generations_file = pop_config.generations_file.clone();
-//     let mut generation_recorder = Recorder::new(&generations_file[..]);
-//     generation_recorder.write_line(&s[..]);
-//     generation_recorder.buffer.flush().unwrap();
+pub fn _initialise_rand(forest:&mut Forest, d_all:&Data, bnd_rec:&mut Recorder, max_population:usize){
+    // Initialise with a random tree
+    loop {
 
-// }
+        // Random individual.  'add_individual' returns true when a
+        // unique individual is created.  FIXME FIXTHAT!
+        // _add_individual should be much more deterministic, pseudo
+        // random
+        while !Population::_add_individual(d_all, bnd_rec, forest) {} 
+
+        if forest.trees.len() == max_population {
+            break;
+        }
+    }
+}        
