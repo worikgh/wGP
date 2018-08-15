@@ -24,7 +24,7 @@ use super::rng;
 #[derive(PartialEq, Debug, Clone)]
 pub struct Score {
     // Fitness calculated when classifying to self.class.unwrap()
-    pub special:f64,
+    pub quality:f64,
 
     //  The name of the class this score is specialised for. Obtained
     //  from the objective data
@@ -34,7 +34,7 @@ pub struct Score {
 impl Score {
 
     pub fn evaluate(&self) -> f64 {
-        self.special
+        self.quality
     }
     
     pub fn partial_cmp(&self, other:&Score) -> Option<Ordering> {
@@ -42,12 +42,12 @@ impl Score {
         self.evaluate().partial_cmp(&other.evaluate())
     }
     pub fn is_finite(&self) -> bool {
-        self.special.is_finite()
+        self.quality.is_finite()
     }
 
     pub fn copy(&self) -> Score {
         let class = self.class.clone();
-        Score{special:self.special, class:class}
+        Score{quality:self.quality, class:class}
     }
 }
 
@@ -102,7 +102,7 @@ pub fn score_individual(
     // the Node for each example.  If the example is in Class C the
     // desired result from the simulation is 1.0, if not it is -1.0.
     // Using a loss function collect the results for each example in
-    // y_d.  The final score (score.special) is 1.0/(1.0+mean(y_d)).
+    // y_d.  The final score (score.quality) is 1.0/(1.0+mean(y_d)).
     // The class is the class that gets the highest score.
 
     // FIXME Score could have a third part that is a measure of
@@ -188,7 +188,7 @@ pub fn score_individual(
     };
 
     //println!("Node: {} Score: {} Class: {}", node.to_string(), best_s, _c);
-    Score{special:best_s,
+    Score{quality:best_s,
           // FIXME This should be a reference with a life time.  This
           // string should be in population.class_names only
           class:_c,
