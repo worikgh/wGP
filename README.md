@@ -1,32 +1,39 @@
 # Genetic Programming - Again #
 
-A system for automatically finding functions.
+## Learning Classifier Rules
 
-Given a file of tabulated data with each row describing a function
-with one or more inputs and one output find a function that maps the
-inputs to the output.
+A system using genetic programming to automatically generate
+classifiers.  
 
-A function is expressed recursively as a tree.  
+A classifier is expressed recursively as a tree.  
 
 ```rust
  struct Node {
    o:Operator,
-   l:Node,
-   r:Node,
-   d:Node
+   l:Option<Node>,
+   r:Option<Node>,
+   d:Option<Node>,
  }
 ```
+
+Each tree is labled with the class it classifies for.  When it
+classifies a case the ideal classifier will output `1` if the case is
+of the class and `-1` if the case is not.  Classifiers are implemented
+as programme trees and prepared using genetic programming.
+
+To classify a new case a collection, `forest`, of trees is used.  The
+class with the highest total is the predicted class.
 
 ## Operators implemented ##
 
 * Terminals All terminals are implemented as floating point values.
-  On terminal nodes `Node::l`, `Node::r` and `Node::d` are null.
+  On terminal nodes `Node::l`, `Node::r` and `Node::d` are `None`.
    * Inputs. From the domain of the function.
-   * Constants.
-* Arity one functions. Apply to `Node::l`. `Node::r` and `Node::d` are null.
+   * Constants. C
+* Arity one functions. Apply to `Node::l`. `Node::r` and `Node::d` are None.
    * Invert. Returns one over the value of `l`.
    * Negate. Returns negative one times 'l'
-* Arity two functions. Apply to `Node::l` and `Node::r`. `Node::d` is null
+* Arity two functions. Apply to `Node::l` and `Node::r`. `Node::d` is None
    * Multiply. Returns `l` times `r`.
    * Gt. If the value of `l` is greater than the value of 'r return 1.
    Otherwise return -1
@@ -42,12 +49,11 @@ A function is expressed recursively as a tree.
    * If. Calculate the value or 'd'.  If that is less than or equal to
      zero return the value of `l`, otherwise the value of `r`
 
+## Classes and Quality
+
 ## Configuration File
 
-The simulation is defined using a configuration file.  The file name
-is passed as the only argument.
-
-The format is:
+ Format is:
 
 `<key> <value>`
 
@@ -57,16 +63,9 @@ The format is:
 
     Example: num_generations 20000
 
-### initial_population ###
-
-    The number of random individuals to initialise the population
-    with.
-
-    Example: initial_population 2000
-
 ### max_population ###
 
-    The maximum size the population will grow to.
+    The maximum size of the population
 
     Example: max_population 10000
 
@@ -113,3 +112,19 @@ The format is:
     when it is destroyed.
 
     Example: birthsanddeaths_file AbaloneBirthsAndDeaths.txt
+
+### copy_prob ###
+
+
+
+
+
+
+
+### data_file ###
+### filter ###
+### mutate_prob ###
+### rescore ###
+### save_file ###
+### training_percent ###
+### work_dir ###
