@@ -1,15 +1,19 @@
-use population::PopulationAnalysis;
-use std::collections::BTreeMap;
 use config::Config;
 use config_default::ConfigDefault;
 use controller::Controller;
+use controller::SimulationCommand;
 use ncurses::*;
+use population::PopulationAnalysis;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::fs;
 use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
+use rng;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum State {
     Stopped,
     Starting,
@@ -79,6 +83,7 @@ impl FrontEnd {
         let (menu_y, main_y, status_y) =
             (0, menu_lines, max_y - status_lines);
         let menu_window = newwin(menu_h, max_x, menu_y, x);
+        nodelay(menu_window, true); // Make calls to wgetch non-blocking
         box_(menu_window, 0, 0);
         let main_window = newwin(main_h, max_x, main_y, x);
         box_(main_window, 0, 0);
@@ -116,99 +121,134 @@ impl FrontEnd {
         // When there is nothing to see on the main screen...
         let mut x = 0;
         let mut y = self.main_y;
-        werase(self.main_window);
-        let l = self.main_y+self.main_h;
-        let c = COLS();
-        let mut delta_y = 1;
-        while x < c && y < l-3 { // FIXME Why -3?
-            let r =  mvwprintw(self.main_window, y, x, "x");
-            if r != 0 {
-                panic!("Failed mvwprintw r {}  w {:?} x {} y {} l {} c {}", r, self.main_window, x, y, l, c);
-            }
-            redraw(self.main_window);
-            x = x + 1;
-            y = y + delta_y;
-            if y == l-4 {
-                delta_y = -1;
-            }else if y == self.main_y {
-                delta_y = 1;
-            }
+        //werase(self.main_window);
+        let l = self.main_y+self.main_h - 3; // FIXME  Why '- 3'?
+        let c = COLS() - 1; // FIXME why `- 1`?
+        let x = rng::random::<usize>() % c as usize;
+        let y = rng::random::<usize>() % l as usize;
+        let chars = ["x", ".", "!","@","#","$","%","^","&","*","(",")","_","+","=","-",":",";","<",">","?","/"];
+        let ind = rng::random::<usize>() % chars.len();
+        let c = chars[ind];
+        let r =  mvwprintw(self.main_window, y as i32, x as i32, c);
+        if r != 0 {
+            panic!("Failed mvwprintw r {}  w {:?} x {} y {} l {} c {}", r, self.main_window, x, y, l, c);
         }
         redraw(self.main_window);
     }
 
-    fn display_status(&mut self) {
-        assert!(self.project.is_some()); // Precondition
-        let name = self.project.as_ref().unwrap().as_str();
+    fn display_project(& self, project:&str) {
+
+        // Display project status
+
         let x_status = 1; // Start column for status
         let mut y_status = 1; // Status lines
         
         werase(self.main_window);
 
-        // Write header
+        // ======================
+        // Status
+        
+        let status = &self.controller.get_status(project);
+
+        // Header
         if wattron(self.main_window, A_UNDERLINE()) != 0 {
             panic!("Failed wattron");
         }
         if mvwprintw(self.main_window, y_status, x_status, "Status") != 0 {
             panic!("Failed mvwprintw");
         }
-        y_status = y_status+2; // Leave a blank line
         if wattroff(self.main_window, A_UNDERLINE()) != 0 {
             panic!("Failed wattroff");
         }
+        y_status = y_status+2; // Leave a blank line
 
-        // Write project name
+        // Project name
         if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Name: {}", name)) != 0 {
+                     &format!("Name: {}", project)) != 0 {
             panic!("Failed mvprint");
         }
         y_status = y_status+1;
 
-        // Status
-        let status = &self.controller.get_status(name);
+
+        // Population
+        if mvwprintw(self.main_window, y_status, x_status,
+                     &format!("Population: {}", status.population)) != 0 {
+            panic!("Failed mvprint");
+        }
+        y_status = y_status+1;
+
+        // Cleared by front end
         if mvwprintw(self.main_window, y_status, x_status,
                      &format!("Cleared: {:?}", status.cleared)) != 0 {
             panic!("Failed mvprint");
         }
         y_status = y_status+1;
+
+        // Simulation running state
         if mvwprintw(self.main_window, y_status, x_status,
                      &format!("Running: {:?}", status.running)) != 0 {
             panic!("Failed mvprint");
         }
         y_status = y_status+1;
+
+        // Generation
         if mvwprintw(self.main_window, y_status, x_status,
                      &format!("Generation: {:?}", status.generation)) != 0 {
             panic!("Failed mvprint");
         }
         y_status = y_status+1;
+
+        // Command
         if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Path: {}", status.path)) != 0 {
+                     &format!("Command: {:?}", status.command)) != 0 {
             panic!("Failed mvprint");
         }
-        y_status = y_status+1;
+        //  End of status display
+        //=======================
+        //
+        // Analysis display
 
-        // Get configuration object (if running) to write a
-        // section on the files in the project's directory
-        let x_files = 30; // Starting column for files section
-        let mut y_files = 1;  // Each line...
-        if wattron(self.main_window, A_UNDERLINE()) != 0 {
-            panic!("Failed wattron");
-        }
-        if mvwprintw(self.main_window, y_files, x_files, "Files") != 0 {
-            panic!("Failed mvwprintw");
-        }
-        if wattroff(self.main_window, A_UNDERLINE()) != 0 {
-            panic!("Failed wattroff");
-        }
-        y_files = y_files+2; // Leave a blank line
-        if let Some(c)  =  self.controller.get_config(name) {
-            // Do something with c
-        }else{
-            eprintln!("do_project default config");
+        if let Some(ref analysis) = status.analysis {
+
+            // A analysis is available
+
+            let x_anal = 30;  // Column for display
+            let mut y_anal = 1;  // Each line
+
+            // Heading
+            if wattron(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattron");
+            }
+            if mvwprintw(self.main_window, y_anal, x_anal,
+                         format!("Analysis Gen: {}", analysis.generation).as_str()) != 0 {
+                panic!("Failed mvwprintw");
+            }
+            if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+                panic!("Failed wattroff");                
+            }
+            y_anal = y_anal+2; // Leave a blank line
+
+            // Summary of results
+            if mvwprintw(self.main_window, y_anal, x_anal,
+                         format!("Q: {:.2}%", 100.0 * analysis.correct as f64/analysis.cases as f64).as_str()) != 0 {
+                panic!("Failed mvwprintw");
+            }
+            y_anal = y_anal+1;
+            
+            if mvwprintw(self.main_window, y_anal, x_anal,
+                         format!("Cases {} Incorrect: {} Correct: {} Unclassified: {}",
+                                 analysis.cases, analysis.incorrect, analysis.correct,
+                                 analysis.cases - analysis.classified).as_str()) != 0 {
+                panic!("Failed mvwprintw");
+            }
+            //y_anal = y_anal+1;
+            
         }
         redraw(self.main_window);
     }
+
     // End of functions to use ncurses top draw on screen
+    //---------------------------------------------------
 
     fn read_projects(&self) -> BTreeMap<usize, String> {
         let mut ret = BTreeMap::new();
@@ -252,10 +292,11 @@ impl FrontEnd {
     }
 
     fn project_screen(&mut self) -> bool {
-        // Initial screen
+        // state == GotProject 
         self.make_menu(&vec!["Create", "Refresh Status", "Analyse", "Configuration", "Utilise"]);
-        
-        self.display_status();
+        if let Some(ref s) =  self.project {
+            self.display_project(s.as_str());
+        }
         true
     }
 
@@ -315,7 +356,14 @@ impl FrontEnd {
             if key == 0 {
                 // Going back a state...
                 self.inp = None; // Consume
-                self.state.pop(); // Going back a state
+                self.state.pop(); // Going back a state Hack to make
+                // the splash screen look good.  It does not clear
+                // itself each time draw_main_splash is called (it
+                // builds up a picture, random as I write), so needs
+                // to be cleared before it is displayed
+                if self.current_state() == State::Starting {
+                    werase(self.main_window);
+                }
                 return if self.state.len() == 0 {
                     // No states left
                     false
@@ -387,6 +435,7 @@ impl FrontEnd {
 
     
 fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
+    // Handle a keypress.  FIXME `key` i the raw ASCII(?) minus 48.  Works for 0-9
     match state {
             State::Starting => match key {
                 1 => {
@@ -427,11 +476,11 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
                             // DefaultConfig
                             let name = self.project.as_ref().unwrap();
                             eprintln!("run {}", name);
-                            let config = self.default_config(name.as_str());
+                            //let config = self.default_config(name.as_str());
 
-                            // Use the controller o run the simulation.  If it
+                            // Use the controller to run the simulation.  If it
                             // fails to launch the status is set appropriately
-                            let status = match self.controller.run_simulation(&config) {
+                            let status = match self.controller.run_simulation(name) {
                                 Ok(_) => format!("{} started", name),
                                 Err(s) => s.to_string(),
                             };
@@ -442,6 +491,13 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
                         2 => Some(State::Refresh),
                         3 => {
                             // Analyse
+
+                            let name = self.project.as_ref().unwrap();
+                            eprintln!("analyse {}", name);
+
+                            // FIXME Use a channel.  This sucks!
+                            self.controller.set_command(name, SimulationCommand::Analyse);
+
                             None
                         },
                         4 => {
@@ -467,14 +523,21 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
         eprintln!("fe_start stack size: {}", self.state.len());
         // Event loop of state machine
         loop {
-            let state = self.state.iter().last().unwrap().clone();
+            //let state = self.state.iter().last().unwrap().clone();
             // Make sure what we display matches the state
             self.update_display();
             self.status_line(&format!("State: {:?}", self.current_state()));
-            self.inp = Some(wgetch(self.menu_window) as usize - 48);
-            eprintln!("Before transition State {:?} stack size: {}", state, self.state.len());
-            if self.state_transition() == false{
-                break;
+            let inp = wgetch(self.menu_window);
+            if inp == ERR {
+                // No input available.  Need to sleep
+                sleep(Duration::new(0, 50000000)); // Fastest is 2 times a second
+            }else{
+                let inp = inp  as usize - 48;
+                self.inp = Some(inp);
+                //eprintln!("Before transition State {:?} stack size: {}", state, self.state.len());
+                if self.state_transition() == false{
+                    break;
+                }
             }
             self.status_line(&format!("State: {:?}", self.current_state()));
         }
@@ -652,7 +715,7 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
     fn default_config(&self, name:&str) -> Config {
 
         // Get the default configuration file for all simulatuons.  It
-        // is iin the root of the directory structure in file named
+        // is in the root of the directory structure in file named
         // ".gp_config".  Or not.  If not use a hard coded default
         let mut config =
             match File::open(format!("{}.gp_config", self.root_dir)){
@@ -669,9 +732,8 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
         match self.find_project_config(name) {
             Some(cfg) => {
                 eprintln!("default_config Found one");
-                for k in cfg.data.keys() {
-                    config.data.insert(k.to_string(),
-                                       cfg.data.get(k).unwrap().to_string());
+                for (k, v) in cfg.data.iter() {
+                    config.data.insert(k.to_string(), v.to_string());
                 }
             },
             None => {
@@ -748,28 +810,10 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
             panic!("Failed mvwprint");
         }
         redraw(self.status_window);
-        eprintln!("status line: {}", msg);
+        //eprintln!("status line: {}", msg);
     }
 
-    fn do_analysis_window(&self, pa:&PopulationAnalysis ){
-
-        // Normalise
-        // let total = self.population as f64;
-        // let total_classified = pa.correct as f64 + pa.incorrect as f64;
-        // let classified = (total_classified)/(total as f64);
-        // let correct = pa.correct/(total);
-        // let incorrect = pa.incorrect/(total);
-        // let false_positives:HashMap<String, f64> = HashMap::new();
-        // let false_negatives:HashMap<String, f64> = HashMap::new();
-        // for c in self.get_classes().iter() {
-        //     let count = *pa.counts.get(c.as_str()).unwrap() as f64;
-
-        //     let f_p = *pa.false_positives.get(c.as_str()).unwrap() as f64;
-        //     false_positives.insert(c, f_p / count);
-
-        //     let f_n = *pa.false_negatives.get(c.as_str()).unwrap();
-        //     false_negatives.insert(c, f_n / count);
-        // }
+    fn do_analysis_window(&self, _pa:&PopulationAnalysis ){
     }
 }
 
