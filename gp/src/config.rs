@@ -1,4 +1,5 @@
 
+use std::path::Path;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -47,6 +48,33 @@ impl Config {
             Some(v) => v,
             _ => panic!("Failed config. {} as usize", k),
         }
+    }
+    pub fn specialise(&self, name:&str) -> Config {
+
+        // Specialise a configuration object for running a particular
+        // project named in @param name
+
+        // The configuration must have 'root_dir' set.  This should be
+        // tha same for all projects.  If a .gp_config file cannot be
+        // found return a copy of passed in Config object
+        
+        let mut ret = self.copy();
+        ret.data.insert("name".to_string(), name.to_string());
+        let proj_dir = format!("{}/Data/", self.get_string("root_dir").unwrap());
+        let cfg_fname = format!("{}{}/.gp_config", proj_dir,  name);
+
+        let path = Path::new(&cfg_fname);
+        if let Ok(f) = File::open(path) {
+            let _cfg = Config::new_file(f);
+            for (k, v) in _cfg.data.iter() {
+                // Over ride a default
+                ret.data.insert(k.to_string(), v.to_string());
+            }
+        }else{
+            eprintln!("Cannot find local config file: {}", cfg_fname);
+        };
+
+        ret
     }
     #[allow(dead_code)]
     pub fn get_f64(&self, k:&str) -> Option<f64> {
