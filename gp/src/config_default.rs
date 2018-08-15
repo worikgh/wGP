@@ -46,7 +46,6 @@ impl ConfigDefault {
         data.insert("data_file".to_string(), "data.in".to_string());
         data.insert("filter".to_string(), "1".to_string());
         data.insert("generations_file".to_string(), format!("{}{}_Generations.txt", work_dir, name).to_string());
-        data.insert("mode".to_string(), "Create".to_string());
         data.insert("mutate_prob".to_string(), "1".to_string());
         data.insert("rescore".to_string(), "0".to_string());
         data.insert("save_file".to_string(), format!("{}{}_Trees.txt", work_dir, name).to_string());
