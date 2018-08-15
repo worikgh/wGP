@@ -181,8 +181,9 @@ fn main() {
 
     let args: Vec<_> = env::args().collect();
     let cfg_file:String;
-    println!("args.len() {}", args.len() );
+    eprintln!("args.len() {}", args.len() );
     if args.len() == 1 {
+        eprintln!("In main");
         FrontEnd::new().fe_start();
     }else{
         cfg_file = args[1].clone();
