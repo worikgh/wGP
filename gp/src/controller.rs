@@ -3,6 +3,8 @@
 // ith the handle plus any other information that may be useful (Root
 // directory of simulation, configuration object, time it started....)
 
+//use population::_ensure_forest;
+use population::Forest;
 use config::Config;
 use config_default::ConfigDefault;
 use population::Population;
@@ -12,7 +14,7 @@ use std::collections::hash_map::Entry::Occupied;
 use std::collections::hash_map::Entry::Vacant;
 //use std::fs::File;
 //use std::path::Path;
-use std::sync::{Mutex, Arc};
+use std::sync::{Mutex, Arc, RwLock};
 use std::thread;
 use std::time::Instant;
 
@@ -39,8 +41,11 @@ pub struct Controller {
     #[allow(dead_code)]
     root_dir:String,
 
-    // Maps the name of a simulation to data about it
-    handles:HashMap<String, (Arc<Mutex<SimulationStatus>>, thread::JoinHandle<()>, Config)>,
+    // Maps the name of a simulation to data about it including the forest
+    handles:HashMap<String, (Arc<Mutex<SimulationStatus>>, Arc<RwLock<Forest>>, thread::JoinHandle<()>, Config)>,
+
+    // The forests.
+    pub forests:HashMap<String, Arc<RwLock<Forest>>>,
 }
 
 impl Controller {
@@ -48,12 +53,15 @@ impl Controller {
         Controller{
             root_dir:root_dir,
             handles:HashMap::new(),
+            forests:HashMap::new(),
         }
     }
     pub fn get_status(& self, proj_name:&str) -> SimulationStatus {
         if let Some(ref entry)  = self.handles.get(proj_name) {
             {
-                // entry is ref to a 3-tuple (Arc<SimulationStatus>, Handle, Config)
+                // entry is ref to a 4-tuple
+                // (Arc<Mutex<SimulationStatus>>, Arc<RwLock<Forest>>,
+                // thread::JoinHandle<()>, Config)
                 let arc = &entry.0;
                 arc.lock().unwrap().clone()
             }
@@ -64,14 +72,16 @@ impl Controller {
     
     pub fn get_command(&self, proj_name:&str) ->SimulationCommand {
         if let Some(ref entry) = self.handles.get(proj_name) {
-            // entry is ref to a 3-tuple (Arc<SimulationStatus>, Handle, Config)
+            // entry is ref to a 4-tuple (Arc<Mutex<SimulationStatus>>, Arc<RwLock<Forest>>, thread::JoinHandle<()>, Config)
             let arc = &entry.0;
             arc.lock().unwrap().command.clone()
         }else{
             SimulationCommand::Empty
         }
     }
-    pub fn set_command(&mut self, proj_name:&str, command:SimulationCommand)  {
+    pub fn set_command(& mut self, proj_name:&str, command:SimulationCommand)  {
+        // FIXME Why does this automatically call _launch_thread if
+        // proj_name not running?
         eprintln!("set_command {:?}", command);
         if !self.running(proj_name) {
             eprintln!("set_command {:?} for {}", command, proj_name);
@@ -80,7 +90,7 @@ impl Controller {
             match self.handles.get(proj_name) {
                 Some(ref entry) => {
                     eprintln!("seting_command {:?}", command);
-                    // entry is ref to a 3-tuple (Arc<SimulationStatus>, Handle, Config)
+                    // entry is ref to a 4-tuple (Arc<Mutex<SimulationStatus>>, Arc<RwLock<Forest>>, thread::JoinHandle<()>, Config)
                     let arc = &entry.0;
                     arc.lock().unwrap().command = command;
                 },
@@ -88,23 +98,25 @@ impl Controller {
             };
         }
     }
-    fn _launch_thread(&mut self, command:SimulationCommand, name:&str) {
+
+    fn _launch_thread(& mut self, command:SimulationCommand, name:&str) {
 
         let config = ConfigDefault::new(name).specialise(name);        
 
         // Create the shared memory to monitor and control simulation
         let bb = Arc::new(Mutex::new(SimulationStatus::new(true, command)));
 
-        // FIXME When a simulation is not running anymore, where is
-        // the population?  In particular the Forest?
-        panic!("Fix this!");
-        let mut p = Population::new(&config);
+        // Create shared memory for the Forest if it does not exist
+        let arc_forest:Arc<RwLock<Forest>> = self.forests.entry(name.to_string()).or_insert(Arc::new(RwLock::new(Forest::new()))).clone();
         
-        let h = p.run_in_thread(bb.clone());
-        self.handles.insert(String::from(name), (bb, h, config.copy()));
+        // The population object is a frame work for the simulation
+        let mut p = Population::new(&config);
+
+        let h = p.run_in_thread(bb.clone(), arc_forest.clone());
+        self.handles.insert(String::from(name), (bb, arc_forest, h, config.copy()));
         eprintln!("Set thread in motion");
     }
-    
+
     pub fn running(&mut self, name:&str) -> bool {
         // Return true if there is a thread handle for this and it is
         // still running
@@ -128,13 +140,11 @@ impl Controller {
         }
     }
         
-    pub fn run_simulation(&mut self, name:&str) -> Result<usize, &str> {
+    pub fn run_simulation(& mut self, name:&str) -> Result<usize, &str> {
 
         // Run a simulation.  The config structure has all the
         // information needed
         
-
-
         // Check not already running
         if !self.running(name) {
             self._launch_thread(SimulationCommand::Simulate,  name);
@@ -147,49 +157,12 @@ impl Controller {
         if let Some(entry)  = self.handles.get(proj_name) {
             // FIXME If the simulation ever can write to Config object
             // this will need a lock
-            Some(entry.2.copy())
+            Some(entry.3.copy())
         }else{
             None
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct SimulationStatus {
-
-    // Front end unsets this to stop simulation gently
-    pub cleared:bool,
-    pub running:bool,
-    pub generation:usize,
-    pub start:Instant, // When started
-    pub command:SimulationCommand,
-    pub analysis:Option<PopulationAnalysis>,
-    pub population:usize,
-}
-
-impl SimulationStatus {
-    pub fn new(cleared:bool, command:SimulationCommand) -> SimulationStatus{
-        SimulationStatus{
-            start:Instant::now(),
-            cleared:cleared,
-            running:false,
-            generation:0,
-            population:0,
-            command:command,
-            analysis:None,
-        }
-    }
-    pub fn copy(&self) -> SimulationStatus{
-        SimulationStatus{
-            start:self.start,
-            cleared:self.cleared,
-            running:self.running,
-            generation:self.generation,
-            population:self.population,
-            command:self.command.clone(),
-            analysis:self.analysis.clone(),
-        }
-    }
-}
 
 
