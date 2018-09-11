@@ -16,9 +16,6 @@ Each classifier is a genetic programming tree expressed recursively:
  }
 ```
 
-Each tree is labelled with the class it classifies for.  Output 1 for
-examples of a class, -1 for counter examples.
-
 Each classifier is evolved using the genetic programming algorithm
 with training data. Each classifier is associated with  a `Score` object:
 
@@ -47,8 +44,8 @@ class and choosing the one with the highest score.
 FIXME: There is no measure of differentiation.  How got a classifier
 is at telling one class from another.
 
-When it classifies a case the ideal classifier will output `1` if the
-case is of the class and `-1` if the case is not.  Classifiers are
+When it classifies a case the ideal classifier will output 1 if the
+case is of the class and -1 if the case is not.  Classifiers are
 implemented as programme trees and prepared using genetic programming.
 
 To classify a new case a collection, `Forest`, of trees is used.  Each
@@ -69,7 +66,7 @@ The value returned from `classify` in population.rs is
 Option<(String, String)>
 ```
 
-The first `String` in the 2-tuple is the inning class.  The second
+The first `String` in the 2-tuple is the winning class.  The second
 string is in the format: `<class> <score>,...` listing all classes and
 the score for the class in descending score order.
 
