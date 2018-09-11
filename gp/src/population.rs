@@ -1,7 +1,51 @@
+// Run simulations
+
+// API: new, create, delete, start, resume, stop, status,
+// analyse/read, classify, save_state, restore_state
+
+// All APIs except new, analyse/read, status, and classify return
+// Result<bool, String>.  If the call succeeds return Ok(true) else
+// return Err(<error message>)
+
+// new: Constructor. Pass a coonfiguration object
+
+// create: Pass a name and a Configuration object.  Set up a
+// simulation so it is ready to start.  If a simulation record of the
+// name exists that is a error.
+
+// delete: Take a name.  If the project does not exists return
+// Ok(false).  If it exists, is not running and can be deleted, delete
+// it and return Ok(true).  Else Err(<error message>)
+
+// start: Passed a name.  If the simulation is created, is not running
+// and can be started start it in a thread and return Ok(true).  Else
+// Err(<error message>)
+
+// resume: Passed a name.  If a simulation is created, has been
+// started but is stopped, restart it and return Ok(true).  Else
+// Err(<error message>)
+
+// stop: Passed a name.  If the simulation is stopped return
+// Ok(false).  If the simulation is running and can be stopped stop it
+// and return Ok(true).  Else Err(<error message>)
+
+// analyse: Pass a name.  If the simulation is in a state to be
+// analysed (there is a forest evolved, there is test data available)
+// do a analysis. (??? In a thread?  FIXME in the future if this takes
+// too much time).  Return Result<PopulationAnalysis, String>,
+// Ok(<PopulationAnalysis>) or Err(<error message>)
+
+// status: Passed a name return Result<PopulationStatus, String>.  If
+// the named simulation exists return Ok(<status object>).  Else
+// Err(<error message>)
+
+// classify: Passed a name and a example from the domain if it can be
+// classified return Ok(<class name>).   Else Err(<error message>)
+
+// save_state restore_state  Save or restore the population from disc.
+
 
 use config::Config;
-use controller::SimulationCommand;
-use controller::SimulationStatus;
 use fs2::FileExt;
 use inputs::Inputs;
 use node::Node;
@@ -11,22 +55,21 @@ use score::Score;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;    
 use std::collections::HashMap;    
-//use std::collections::btree_map::Entry;
 use std::collections::hash_map::Entry::Vacant;
 use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
+// use std::io::BufReader;
 use std::io::Write;
-use std::io::prelude::*;
-use std::path::Path;
-use std::sync::{Mutex, Arc};
+//use std::io::prelude::*;
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::time::Instant;
 use super::Data;
 use super::Recorder;
 use super::score_individual;
 
-// Define a individual.  Consists of a node, a id, and a score.  Called
-// a Tree because it is not a sub-tree...
+// Define a individual.  Consists of a node, a id, and a score.
+// Called a Tree because it is not a sub-tree... FIXME Should this be
+// in node.rs?
 #[derive(Clone)]
 struct Tree {
     id:usize,
@@ -39,10 +82,12 @@ struct Tree {
 
 #[derive(Clone)]
 pub struct Forest {
+
+    // Every simulation has one forest
+    
     // Store trees in a Hash keyed by the string representation of the
     // tree
     trees:HashMap<String, Tree>,
-
     
     // Map score to trees so it is easy to find best and worst.  Store
     // the string representation and beware of trees with same
@@ -58,7 +103,7 @@ pub struct Forest {
 
 
 impl Forest {
-    fn new() -> Forest {
+    pub fn new() -> Forest {
         Forest{
             maxid:0,
             trees:HashMap::new(),
@@ -75,6 +120,12 @@ impl Forest {
         // Return number of trees in self.trees - number in score_trees
         self.trees.len() as i32 - self.score_trees.iter().fold(0, |mut sum, x| {sum += x.1.len(); sum})  as i32
     }
+    fn replace(&mut self, forest:&Forest) {
+        self.trees = forest.trees.clone();
+        self.score_trees = forest.score_trees.clone();
+        self.maxid = forest.maxid;
+    }
+    
     fn insert(&mut self, str_rep:&str, tree:Tree) {
         // Check for duplicates
         match self.trees.get(str_rep){
@@ -177,14 +228,51 @@ impl Forest {
 }
 
 
+struct SimulationRecord {
+    // The record that stores all that a simulation needs.  The
+    // SimulationStatus (FIXME Change tht name as it s used to pass
+    // commands to simulation as well), and the Forest are kept in
+    // Arc<..> guards so they can be passed between threads.  The name
+    // is not stored in this record, itis stored as the key in the
+    // HashMap that stores this record.
+    status:Arc<RwLock<SimulationStatus>>,
+    forest:Arc<RwLock<Forest>>,
+    handle:Option<thread::JoinHandle<()>>,
+    config:Config,
+    data:Data,
+
+    // Hold this when doing a simulation to stop two simultaneous
+    // analyses
+    analysis_mutex:Arc<Mutex<()>>, 
+}
+
+impl SimulationRecord {
+    fn new(config:&Config) -> SimulationRecord {
+        let data_path = format!("{}/Data/{}/{}", config.get_string("root_dir").expect("Config: root_dir"),
+                                config.get_string("name").expect("Config: name"),
+                                config.get_string("data_file").expect("Config: data_file"));
+        let data = Data::new(&data_path, config.get_usize("training_percent").expect("Config: training_percent"));
+        
+        SimulationRecord {
+            status:Arc::new(RwLock::new(SimulationStatus::new(false))),
+            forest:Arc::new(RwLock::new(Forest::new())),
+            handle:None,
+            config:config.copy(),
+            data:data,
+            analysis_mutex:Arc::new(Mutex::<()>::new(())),
+        }
+    }
+}
 pub struct Population {
 
-    // The programme representations
-    forest:Forest,
+    // There is one Population
+    
+    // Maps the name of a simulation to data about it including the forest
+    simulations:HashMap<String, SimulationRecord>,
 
-    d_all:Data,
-
+    // Configuration that applies to all simulations
     pop_config:PopulationConfig,
+
 }
 
 // The configuration data for a Population.
@@ -195,15 +283,10 @@ struct PopulationConfig {
     seed:Vec<u32>,
     num_generations:usize,
 
-    // File name here log of each generation goes
-    generations_file:String,
-
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
 
-    save_file:String,
-    birthsanddeaths_file:String,
     max_population:usize,
 
     // If non 0 pick best 'filter' rules in restore trees
@@ -218,31 +301,163 @@ struct PopulationConfig {
 impl PopulationConfig {
     fn new(config:&Config) -> PopulationConfig {
 
-        PopulationConfig {
-            seed:config.get_string("seed").expect("Could not find seed").split_whitespace().
-                map(|x| x.parse::<u32>().expect("Could not parse seed")).collect(),
-            num_generations:config.get_usize("num_generations").expect("Could not find num_generations"),
-            crossover_percent:config.get_usize("crossover_percent").expect("Could not find crossover_percent"),
-            mutate_prob:config.get_usize("mutate_prob").expect("Could not find mutate_prob"),
-            copy_prob:config.get_usize("copy_prob").expect("Could not find copy_prob"),
-            max_population:config.get_usize("max_population").expect("Could not find max_population"),
-            filter:config.get_usize("filter").expect("Could not find filter"),
-
-            birthsanddeaths_file:config.get_string("birthsanddeaths_filename").expect("Could not find birthsanddeaths_file"),
-            generations_file:config.get_string("generations_file").expect("Could not find generations_file"),
-            save_file:config.get_string("save_file").expect("Could not find save_file"),
-
-            rescore:match config.get_usize("filter") {
-                Some(r) => match r {
-                    0 => false,
-                    _ => true,
+        // Collect errors to report to user, all at once.  This is so
+        // a user does not have to fix one error, re-run, fix the
+        // next...
+        let mut err = "".to_string();
+        let seed:Vec<u32>;
+        if let Some(s) =  config.get_string("seed") {
+            seed = s.split_whitespace().map(|x| match x.parse::<u32>() {
+                Ok(n) => n,
+                Err(e) => {
+                    err.push_str(format!("Could not parse seed: {}\n", e).as_str());
+                    0 // Must return a valid u32 from this branch
                 },
-                None => false, // default
+            }).collect();
+        }else{
+            seed = vec![0];
+            err.push_str("Could not find seed\n");
+        }
+        let num_generations:usize;
+        if let Some(n) = config.get_usize("num_generations") {
+            num_generations = n;
+        }else{
+            num_generations = 0;
+            err.push_str("Could not find num_generations\n");
+        }
+        let crossover_percent:usize;
+        if let Some(n) = config.get_usize("crossover_percent") {
+            crossover_percent = n;
+        }else{
+            crossover_percent = 0;
+            err.push_str("Could not find crossover_percent\n");
+        }
+        let mutate_prob:usize;
+        if let Some(n) = config.get_usize("mutate_prob") {
+            mutate_prob = n;
+        }else{
+            mutate_prob = 0;
+            err.push_str("Could not find mutate_prob\n");
+        }
+        let copy_prob:usize;
+        if let Some(n) = config.get_usize("copy_prob") {
+            copy_prob = n;
+        }else{
+            copy_prob = 0;
+            err.push_str("Could not find copy_prob\n");
+        }
+        let max_population:usize;
+        if let Some(n) = config.get_usize("max_population") {
+            max_population = n;
+        }else{
+            max_population = 0;
+            err.push_str("Could not find max_population\n");
+        }
+        // let birthsanddeaths_file:String;
+        // if let Some(n) = config.get_string("birthsanddeaths_filename") {
+        //     birthsanddeaths_file = n;
+        // }else{
+        //     birthsanddeaths_file = "".to_string();
+        //     err.push_str("Could not find birthsanddeaths_file\n");
+        // }
+        // let generations_file:String;
+        // if let Some(n) = config.get_string("generations_file") {
+        //     generations_file = n;
+        // }else{
+        //     generations_file = "".to_string();
+        //     err.push_str("Could not find generations_file\n");
+        // }
+        // let save_file:String;
+        // if let Some(n) = config.get_string("save_file") {
+        //     save_file = n;
+        // }else{
+        //     save_file = "".to_string();
+        //     err.push_str("Could not find save_file\n");
+        // }
+
+        let filter:usize;
+        if let Some(n) = config.get_usize("filter") {
+            filter = n;
+        }else{
+            filter = 0;
+            err.push_str("Could not find filter\n");
+        }
+        let rescore = match config.get_usize("filter") {
+            Some(r) => match r {
+                0 => false,
+                _ => true,
             },
+            None => false, // default
+        };
+        if err.len() != 0 {
+            // If anything went wrong report it and fail
+            panic!(err);
+        }
+        PopulationConfig {
+            copy_prob,
+            crossover_percent,
+            filter,
+            max_population,
+            mutate_prob,
+            num_generations,
+            rescore,
+            seed,
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct SimulationStatus {
+
+    // FIXME  What is the difference betwween SimulationStatus and PopulationStatus?
+    // FIXME These two variables can be one, surely?
+    pub cleared:bool, // Front end unsets this to stop simulation gently
+    pub running:bool, // Simulation re/sets this as it starts/stops
+
+    pub generation:usize, // Current generation
+    pub start:Instant, // When started
+    pub analysis:Option<PopulationAnalysis>, 
+    pub population:usize, // Number of trees in forest FIXME Necessary?
+}
+
+impl SimulationStatus {
+    pub fn new(cleared:bool) -> SimulationStatus{
+        SimulationStatus{
+            start:Instant::now(),
+            cleared:cleared,
+            running:false,
+            generation:0,
+            population:0,
+            analysis:None,
+        }
+    }
+    #[allow(dead_code)]
+    pub fn copy(&self) -> SimulationStatus{
+        SimulationStatus{
+            start:self.start,
+            cleared:self.cleared,
+            running:self.running,
+            generation:self.generation,
+            population:self.population,
+            analysis:self.analysis.clone(),
         }
     }
 }
 
+// #[derive(Debug, Clone)]
+// pub enum PopulationStatus
+// FIXME Some of this can be a enum....
+// FIXME Is this needed?
+#[derive(Debug, Clone)]
+pub struct PopulationStatus {
+    // FIXME  What is the difference betwween SimulationStatus and PopulationStatus?
+    pub name:String, // FIXME this should be a &str and stored some place else
+    pub created:bool,
+    pub running:bool,
+    pub stopped:bool,
+    pub generation:usize,
+    pub population:usize, // Number of trees in forrest
+}
+    
 #[derive(Debug, Clone)]
 pub struct PopulationAnalysis {
     // Stores a analysis of the population
@@ -276,6 +491,7 @@ pub struct PopulationAnalysis {
 
 }    
 impl PopulationAnalysis {
+    #[allow(dead_code)]
     fn new(classes:&Vec<String>) -> PopulationAnalysis {
         let mut ret =  PopulationAnalysis {
             incorrect:0,
@@ -297,396 +513,328 @@ impl PopulationAnalysis {
 }
 impl Population {
 
-    pub fn new(config:&Config) -> Population {
-        // Load the data
+
+    //==============================
+    //
+    // API Implementation
+    //
+
+    pub fn new(config:&Config) ->  Population {
+
         
-        let pop_config = PopulationConfig::new(&config);
-
-        let forest = Forest::new();
-
-        // FIXME Details about directory structure of simulations is
-        // hard coded here, there and everywhere
-        let data_file = format!("{}/Data/{}/{}",
-                                config.get_string("root_dir").expect("No root_dir in config"),
-                                config.get_string("name").expect("No name in config"),
-                                config.get_string("data_file").expect("No data_file in config"));
-
-        if !Path::new(data_file.as_str()).exists() {
-            panic!("Data file: {} does not exist", data_file);
+        Population {
+            pop_config:PopulationConfig::new(&config),
+            simulations:HashMap::new(),
         }
-        let training_percent = config.get_usize("training_percent").unwrap();
-        let d_all = Data::new(&data_file, training_percent);
+    }
 
+    pub fn create(&mut self, name:&str, config:&Config) -> Result<bool, String> {
 
-        // Write the header for the generaion file
-        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-        let  generations_file = pop_config.generations_file.clone();
-        let mut generation_recorder = Recorder::new(&generations_file[..]);
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
+        // Set up a simulation ready to start
 
-        Population{
-            forest,
-            d_all,
-            pop_config,
+        // First check if a simulation already exists
+        if self.simulations.contains_key(name) {
+            return Err(format!("Simulation exists: {} ", name));
         }
+
+        // FIXME Check the configuration file here, rather than have
+        // it fail when a simulation starts.
+        // root_dir must exist and be a directory
+        // root_dir/data_file must exist and be a readable file
+        // training_percent must exist as a usize
+
+        self.simulations.insert(name.to_string(), SimulationRecord::new(config));
+        Ok(true)
         
     }
 
+    #[allow(dead_code)]
+    pub fn delete(&mut self, name:&str) -> Result<bool, String> {
+        if self.simulations.contains_key(name) {
+            if self.simulations.get(name).unwrap().status.read().unwrap().running {
+                Err(format!("Simulation {} cannot be deleted.  It is running", name))
+            }else{
+                self.simulations.remove(name).expect(format!("Simulation named {} is not in map", name).as_str());
+                Ok(true)
+            }
+        }else{
+            Ok(false)
+        }
+    }
 
-    pub fn initialise_rand(&mut self){
-        // Initialise with a random tree
-        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
-        loop {
+    pub fn start(&mut self, name:&str) -> Result<bool, String> {
+        // start: Passed a name.  If the simulation is created, is not
+        // running and can be started start it in a thread and return
+        // Ok(true).  Else Err(<error message>)
 
-            // Random individual.  'add_individual' returns true when
-            // a unique individual is created.
-            while !self.add_individual(&mut bnd_rec) {} 
+        if !self.simulations.contains_key(name) {
+            return Err(format!("Simulation named: {} is not created", name));
+        }
 
-            if self.len() == self.pop_config.max_population {
-                break;
+        match self.simulations.get(name).unwrap().handle {
+            Some(_) =>  Err(format!("Simulation named: {} is created and started", name)),
+            None => {
+                if self.simulations.get(name).unwrap().status.read().unwrap().running {
+                    // FIXME This is a contradiction.  Perhaps panic! here?
+                    return Err(format!("Simulation named: {} is created and running", name));
+                }
+
+                // There is no thread handle already present and cleared to run
+                
+                // Get all the variables the simulation will need
+                let mutate_prob = self.pop_config.mutate_prob;
+                let copy_prob = self.pop_config.copy_prob;
+                let crossover_percent = self.pop_config.crossover_percent; 
+                let max_population = self.pop_config.max_population;
+                let seed:Vec<u32> = self.pop_config.seed.clone();
+
+                // Write the header for the generaion file
+                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+                let status_lock = self.simulations.get(name).unwrap().status.clone();
+                let forest_lock = self.simulations.get(name).unwrap().forest.clone();
+                let data = self.simulations.get(name).unwrap().data.clone();
+                let config = self.simulations.get(name).unwrap().config.copy();
+
+                let num_generations = config.get_usize("num_generations").unwrap();
+                let bnd_fname = format!("{}/Data/{}/{}",
+                                        config.get_string("root_dir").expect("Config: root_dir"),
+                                        config.get_string("name").expect("Config: name"),
+                                        config.get_string("birthsanddeaths_filename").expect("Config: birthsanddeaths_filename"));
+
+                let mut bnd_rec = Recorder::new(bnd_fname.as_str());
+                let save_file = config.get_string("save_file").unwrap().clone();
+                let  generations_file = format!("{}/Data/{}/{}",
+                                                config.get_string("root_dir").expect("Config: root_dir"),
+                                                config.get_string("name").expect("Config: name"),
+                                                config.get_string("generations_file").unwrap().clone());
+                let mut generation_recorder = Recorder::new(&generations_file[..]);
+                generation_recorder.write_line(&s[..]);
+                generation_recorder.buffer.flush().unwrap();
+
+                // Start the thread
+                let handle = thread::spawn( move || {
+                    // The source of entropy.  
+                    rng::reseed(seed.as_slice());
+
+
+                    {
+                        // Update status.  We are running
+                        let mut ps = status_lock.write().unwrap();
+                        (*ps).running = true;
+                    }
+                    let mut generation = 0;
+
+                    // If the forrest has no trees initialise it
+                    // Initialise a random population
+                    {
+                        // Block for accessing forest with a mutex
+                        if (*forest_lock.read().unwrap()).trees.len() == 0 {
+                            _initialise_rand(&mut forest_lock.write().unwrap(),
+                                             &data, &mut bnd_rec, max_population);
+                        }else{
+                            eprintln!("623 population Not calling _initialise_rand");
+                        }
+                    }
+
+                    loop {
+                        // Check if the process has been stopped
+                        generation = generation + 1;
+
+                        // If we have done as many generations as we
+                        // plan to, quit
+                        if generation > num_generations {
+                            break;
+                        }
+                        
+                        {
+                            {
+                                let mut ps = status_lock.write().unwrap();
+                                ps.generation = generation;
+                                if !ps.running  {
+                                    break; // FIXME This is where `cleared` was used
+                                }
+                            }
+                        }
+
+                        // Advance simulation by generating a new forest
+                        let forest:Forest;
+
+                        forest = _new_generation(&forest_lock.read().unwrap(),
+                                                 mutate_prob, copy_prob,
+                                                 crossover_percent,
+                                                 max_population,
+                                                 &data,
+                                                 &mut bnd_rec,
+                                                 save_file.as_str());
+
+                        forest_lock.write().unwrap().replace(&forest);
+                    }
+
+                    // Loop finished.  Reset the running flag
+                    let mut ps = status_lock.write().unwrap();
+                    ps.running  = false;
+                });
+
+                // Thread started
+                self.simulations.get_mut(name).unwrap().handle = Some(handle);
+                Ok(true)
+            },
+        }
+    }
+
+    pub fn status(&self, name:&str) -> Result<SimulationStatus, String> {
+        match self.simulations.get(name) {
+            None =>  Err(format!("Project {} has not been started", name)),
+            Some(simulation_record) => {
+                let ss = simulation_record.status.read().unwrap().clone();
+                Ok(ss)
             }
         }
-    }        
+    }
+
+    fn _analyse_thread(status_lock:Arc<RwLock<SimulationStatus>>,
+                       forest_lock:Arc<RwLock<Forest>>,
+                       data:Data, lock:Arc<Mutex<()>>)  -> thread::JoinHandle<()> {
+        thread::spawn( move || { // FIXME What are implications not keeping handle
+            match lock.try_lock() {
+                Ok(_) => {
+            
+                    let generation = status_lock.read().unwrap().generation;
+                    let pa = analyse(&forest_lock.read().unwrap(), &data, generation);
+                    status_lock.write().unwrap().analysis = Some(pa.clone());
+
+                },
+                Err(err) => eprintln!("Could not get lock {}", err),
+            };
+            // The Arc is released here
+        })                
+    }
+    pub fn analyse(&mut self, name:&str) {
+        // analyse: Pass a name.  If the simulation is in a state to
+        // be analysed (there is a forest evolved, there is test data
+        // available) do a analysis. (??? In a thread?  FIXME in the
+        // future if this takes too much time).  Return
+        // Result<PopulationAnalysis, String>,
+        // Ok(<PopulationAnalysis>) or Err(<error message>).  Store
+        // the result, if there is one, in
+        // self.simulations[name].analyse
+
+
+        if let Some(sr) = self.simulations.get(name) {
+            // There is a simulation record.
+
+            let m_c = sr.analysis_mutex.clone();
+            // analysis_mutex is not held
+            let status_lock = sr.status.clone();
+            let forest_lock = sr.forest.clone();
+            let data = sr.data.clone();
+
+            Population::_analyse_thread(status_lock, forest_lock, data, m_c);
+
+        }else{
+            eprintln!("723 Population::analyse: Project {} is not created", name.clone());
+        }
+    }
+
+
+    //     // FIXME Details about directory structure of simulations is
+    //     // hard coded here, there and everywhere
+    //     let data_file = format!("{}/Data/{}/{}",
+    //                             config.get_string("root_dir").expect("No root_dir in config"),
+    //                             config.get_string("name").expect("No name in config"),
+    //                             config.get_string("data_file").expect("No data_file in config"));
+
+    //     if !Path::new(data_file.as_str()).exists() {
+    //         panic!("Data file: {} does not exist", data_file);
+    //     }
+    //     let training_percent = config.get_usize("training_percent").unwrap();
+    //     let d_all = Data::new(&data_file, training_percent);
+
+
+    //     // Write the header for the generaion file
+    //     let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
+    //     let  generations_file = pop_config.generations_file.clone();
+    //     let mut generation_recorder = Recorder::new(&generations_file[..]);
+    //     generation_recorder.write_line(&s[..]);
+    //     generation_recorder.buffer.flush().unwrap();
+
+    //     Population{
+    //         d_all,
+    //         pop_config,
+    //         name,
+    //     }
+        
+    // }
+
+
+    // pub fn initialise_rand(&mut self){
+    //     // Initialise with a random tree
+    //     let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
+    //     loop {
+
+    //         // Random individual.  'add_individual' returns true when
+    //         // a unique individual is created.
+    //         while !self.add_individual(&mut bnd_rec) {} 
+
+    //         if self.len() == self.pop_config.max_population {
+    //             break;
+    //         }
+    //     }
+    // }        
 
     #[allow(dead_code)]
     pub fn restore(&mut self){
         // FIXME This could have a file name argument so Population
         // does not need to know
         // FIXME Restore trees must return a forest
-        self.forest = self.restore_trees();
+        // self.forest = self.restore_trees();
     }
     
-    pub fn run_in_thread(&mut self,
-                         a:Arc<Mutex<SimulationStatus>>) -> thread::JoinHandle<()>{
-
-        
-        // FIXME There should be a idiomatic Rust way to do this
-        let mut forest = self.forest.clone(); 
-        
-        let mutate_prob = self.pop_config.mutate_prob;
-        let copy_prob = self.pop_config.copy_prob;
-        let crossover_percent = self.pop_config.crossover_percent; 
-        let max_population = self.pop_config.max_population;
-        let d_all = self.d_all.clone();
-        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
-        let save_file = self.pop_config.save_file.clone();
-
-
-        let seed:Vec<u32> = self.pop_config.seed.clone();
-        let num_generations = self.pop_config.num_generations;
-        // Write the header for the generaion file
-        let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-        let  generations_file = self.pop_config.generations_file.clone();
-        let mut generation_recorder = Recorder::new(&generations_file[..]);
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
-        
-        thread::spawn( move ||  {
-
-            // The source of entropy.  
-            rng::reseed(seed.as_slice());
-
-
-            {
-                // Update status.  We are running
-                let mut ps = a.lock().unwrap();
-                (*ps).running = true;
-            }
-            let mut generation = 0;
-
-            // If the forrest has no trees initialise it
-            // Initialise a random population
-            if forest.trees.len() == 0 {
-                eprintln!("B4 _initialise_rand");
-                _initialise_rand(&mut forest, &d_all, &mut bnd_rec, max_population);
-                eprintln!("After _initialise_rand");
-            }else{
-                eprintln!("Not calling _initialise_rand");
-            }                
-            
-            let mut command = SimulationCommand::Empty;
-
-
-            // If a simulation is paused to run another command set this flag
-            let mut paused = false;  
-
-            loop {
-
-                // Main loop
-                {
-                    // Update status.  We are running
-                    let mut ps = a.lock().unwrap();
-                    (*ps).generation = generation;
-
-                    let _command = (*ps).command.clone();
-
-                    if _command != command {
-                        if command == SimulationCommand::Simulate {
-                            // A simulation is being paused
-                            paused = true;
-                        }
-                        command = _command;
-                    }                          
-                }
-                
-                match  command {
-                    SimulationCommand::Analyse => {
-                        eprintln!("SimulationCommand::Analyse");
-                        let mut pa = analyse(&forest, &d_all);
-                        pa.generation = generation;
-                        let mut ps = a.lock().unwrap();
-                        (*ps).analysis = Some(pa);
-                        (*ps).command = if paused {
-                            // A simulation is paused
-                            SimulationCommand::Simulate
-                        }else{
-                            SimulationCommand::Empty
-                        };
-
-                    },
-                    SimulationCommand::Empty => return,
-                    SimulationCommand::Simulate => {
-                        forest = 
-                            Population::_new_generation(&forest, mutate_prob, copy_prob,
-                                                        crossover_percent,
-                                                        max_population, &d_all,
-                                                        &mut bnd_rec,
-                                                        save_file.as_str());
-                        generation = generation + 1;
-                    },
-                };
-                // Update the status structure and check if caller has
-                // decided to shut this thread down and maintain the
-                // population field of status
-                let mut ps = a.lock().unwrap();
-                (*ps).population = forest.count();
-                (*ps).generation = generation;
-                
-                if ps.cleared == false ||
-                    generation == num_generations  {
-                        
-                        // Caller wants us to stop orthere has been
-                        // enough generations
-                        ps.running = false;
-                        break;
-                    }
-            }
-            
-            {
-                // Update status.  We are not running
-                let mut ps = a.lock().unwrap();
-                (*ps).running = false;
-                (*ps).command = SimulationCommand::Empty;
-            }            
-        })
-    }
-
-
-
     
     #[allow(dead_code)]
     fn best_idx(&self) -> usize {
         0
     }    
+    #[allow(dead_code)]
     pub fn best_id(&self) -> usize {
 
-        // Get trees associated with lowest score
-        let (_, vt) = self.forest.score_trees.iter().next().unwrap();
-        // Get a tree from that vector
-        let st = vt.iter().next().unwrap();
-        // Get the tree labled and return its id
-        self.forest.trees.get(st).unwrap().id
-            
+        // // Get trees associated with lowest score
+        // let (_, vt) = self.forest.score_trees.iter().next().unwrap();
+        // // Get a tree from that vector
+        // let st = vt.iter().next().unwrap();
+        // // Get the tree labled and return its id
+        // self.forest.trees.get(st).unwrap().id
+        panic!("Function that needs refactoring for new location of forests")
     }
     
+    #[allow(dead_code)]
     pub fn best_score(&self) -> & Score {
-        // Get trees associated with lowest score
-        let (_, vt) = self.forest.score_trees.iter().next().unwrap();
-        // Get a tree from that vector
-        let st = vt.iter().next().unwrap();
-        // Get the tree labled and return its id
-        &self.forest.trees.get(st).unwrap().score
+        // // Get trees associated with lowest score
+        // let (_, vt) = self.forest.score_trees.iter().next().unwrap();
+        // // Get a tree from that vector
+        // let st = vt.iter().next().unwrap();
+        // // Get the tree labled and return its id
+        // &self.forest.trees.get(st).unwrap().score
+        panic!("Function that needs refactoring for new location of forests")
     }
-    pub fn len(&self) -> usize {
-        self.forest.trees.len()
-    }
+    // pub fn len(&self) -> usize {
+    //     // let f = &self.controller.forests;
+    //     // let f = f.get(&self.name).unwrap().read().unwrap();
+    //     // (*f).trees.len()
+        
+    // }
 
-    fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
-        classify(case, &self.d_all.input_names, &self.d_all.class_names, &self.forest)
-    }
+    // Deprecated
+    // fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
+    //     classify(case, &self.d_all.input_names, &self.d_all.class_names, &self.forest)
+    // }
 
-    pub fn analyse(&self) -> PopulationAnalysis {
-        analyse(&self.forest, &self.d_all)
-    }
-
-    // FIXME Refactor this so it calls a standalone function which can
-    // do a new generation referencing only the Forest so it can be put
-    // into a thread.  Having it a method of Population means that
-    // cannot access 'self'
-    fn _new_generation(forest:&Forest,
-                       mutate_prob:usize,
-                       copy_prob:usize,
-                       crossover_percent:usize, 
-                       max_population:usize,
-                       d_all:&Data,
-                       bnd_rec:&mut Recorder,
-                       save_file:&str) -> Forest // New trees
-    {
-
+    // Deprecated
+    // pub fn analyse(&self) -> PopulationAnalysis {
+    //     analyse(&self.forest, &self.d_all)
+    // }
 
         
-        let mut new_forest = Forest::new();
-
-        // The unique id given to each tree
-        new_forest.maxid = forest.maxid + 1;
-
-        // Generate some of new population from the old population. The
-        // number of crossovers to do is (naturally) population.len()
-        // * crossover_percent/100
-        let ncross = (forest.trees.len() * crossover_percent)/100;
-        let mut nc = 0;
-        while nc < ncross  {
-
-            let (nb, l, r) = Population::_do_crossover(&forest);
-
-            let st = (*nb).to_string();
-            if !new_forest.has_tree_nb(&nb) {
-
-                // A unique child in next generation
-                let sc = score_individual(&nb, d_all, true);
-                let id = new_forest.maxid+1;
-                new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
-                new_forest.maxid = id;
-                bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
-                                            l, r, id, &sc.quality, st));
-            }
-            nc += 1;
-        }
-
-        // Do mutation.  Take mut_probab % of trees, mutate them, add
-        // them to the new population
-        for (_, t) in forest.trees.iter() {
-            if rng::gen_range(0, 100) < mutate_prob {
-
-                // The id of the tree being mutated
-                let id0 = t.id;
-
-                // Copy the tree and mutate it.  Loose interest in
-                // original tree now
-                let t = t.tree.copy();
-
-                let nb = Population::_mutate_tree(t, d_all);
-
-                // Convert to a string to check for duplicates and for
-                // the record 
-                let st = (*nb).to_string();
-                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
-
-                    // Unique in the new population
-
-                    let sc = score_individual(&nb, d_all, true);
-                    new_forest.maxid += 1;
-                    let id = new_forest.maxid;
-                    new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
-                    bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
-                                               id0, new_forest.maxid, st, &sc.quality).as_str());
-                }                
-            }
-        }
-
-        // Copy the best trees.
-        let mut cp = 0; // Number copied
-        let ncp = (forest.trees.len()*100)/copy_prob; // Number to copy
-        for (_, vt) in forest.score_trees.iter() {
-            //let it = forest.iter();
-            // FIXME This could be probabilistic with roulette wheel
-            // selection.
-            for st in vt.iter() {
-
-                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
-
-                    // Unique in the new population
-                    let t = forest.trees.get(st).unwrap();
-                    new_forest.insert(st, t.clone());
-                    cp += 1;
-                    if cp == ncp  {
-                        break;
-                    }
-                }
-                // FIXME The previous break should use a label or some thing
-                if cp == ncp  {
-                    break;
-                }
-            }
-        }    
-
-        // New population is created in new_forest;
-        
-        // Eliminate all trees with no valid score and sort them 
-        new_forest = Population::_cull_sort(&new_forest, bnd_rec);
-        // Adjust population
-        // let mut n1 = 0; // Number of individuals deleted
-        // let mut n2 = 0; // Number of individuals added
-        while new_forest.trees.len() > max_population {
-            Population::_delete_worst(&mut new_forest, bnd_rec);
-            //n1 += 1;
-        }
-        let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
-        while new_forest.trees.len() < max_population {
-            while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
-        }
-        if flag {
-            // Sort again as we added new individuals. FIXME cull_sort
-            // must be independant of Population for thread safety
-            new_forest = Population::_cull_sort(&new_forest, bnd_rec ); 
-        }
-
-        bnd_rec.buffer.flush().unwrap(); 
-
-        // FIXME check must be independent of Population for thread
-        // safety
-
-        if !Population::_check(&new_forest) {
-            panic!("Check failed");
-        }
-
-        // FIXME save_trees must be independant of Population for
-        // thread safety
-        Population::_save_trees(&new_forest, save_file);
-        assert!(new_forest._check_sz() == 0);
-        new_forest 
-    }
-    
-    pub fn new_generation(&mut self, generation:usize){
-
-        // Call every generation
-        // FIXME  Do not do this every generation
-        let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
-        let new_forest = Population::_new_generation(&mut self.forest,
-                                                     self.pop_config.mutate_prob,
-                                                     self.pop_config.copy_prob,
-                                                     self.pop_config.crossover_percent, 
-                                                     self.pop_config.max_population,
-                                                     &self.d_all,
-                                                     &mut bnd_rec,
-                                                     self.pop_config.save_file.as_str());
-        
-
-        let s = format!("{} {} {} {} {}",
-                        generation,
-                        self.best_id(),
-                        self.best_score().quality,
-                        self.len(),
-                        self.get_tree_id(self.best_id()).tree.to_string());
-        // Set up output file to record each generation:  FIXME move this to population
-        let generations_file = &self.pop_config.generations_file;
-        let mut generation_recorder = Recorder::new(generations_file.as_str());
-        generation_recorder.write_line(&s[..]);
-        generation_recorder.buffer.flush().unwrap();
-        self.forest = new_forest;
-    }
-    
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
         for (_, v) in forest.trees.iter() {
@@ -697,9 +845,9 @@ impl Population {
         }
         ret
     }
-    fn check(&self) -> bool {
-        Population::_check(&self.forest)
-    }
+    // fn check(&self) -> bool {
+    //     true //Population::_check(&self.forests)
+    // }
     
     
 
@@ -765,11 +913,11 @@ impl Population {
         // });
         ret
     }
-    pub fn cull_sort(&mut self, bnd_rec:&mut Recorder) {
-        Population::_cull_sort(&self.forest, bnd_rec);
-    }
+    // pub fn cull_sort(&mut self, bnd_rec:&mut Recorder) {
+    //     Population::_cull_sort(&*self.controller.forests.get(&self.name).unwrap().read().unwrap(), bnd_rec);
+    // }
 
-    fn _get_tree_id<'a>(forest:&'a Forest, id:usize) -> &'a Tree {
+    fn _get_tree_id<'b>(forest:&'b Forest, id:usize) -> &'b Tree {
 
         // Get a tree based on its id
         // FIXME Use iterator on Forest or ScoreTreeMap
@@ -780,9 +928,10 @@ impl Population {
         }
         panic!("Cannot get node with id: {}", id);
     }
-    fn get_tree_id(&self, id:usize) -> &Tree {    
-        Population::_get_tree_id(&self.forest, id)
-    }
+    // fn get_tree_id(&self, id:usize) -> &Tree {    
+    //     //        //*(self.controller.forests.get(&self.name).unwrap().read().unwrap()).trees.len()
+    //     Population::_get_tree_id(&*self.controller.forests.get(&self.name).unwrap().read().unwrap(), id)
+    // }
     
 
     // #[allow(dead_code)]
@@ -792,19 +941,21 @@ impl Population {
     //     &self.trees[id]
     // }
 
-    #[allow(dead_code)]
-    fn get_trees_of_class(&self, class:&String) -> Vec<&Tree> {
-        // FIXME: Ho do e do string comparison better in rust?  Is
-        // there a problem ith this?
-        let test = class.clone();
-        self.forest.trees.iter().filter(|(_,t)| t.score.class == test).map(|(_, x)| x).collect()
-    }
+    // #[allow(dead_code)]
+    // fn get_trees_of_class(& self, class:&String) -> Vec<& Tree> {
+    //     // FIXME: Ho do e do string comparison better in rust?  Is
+    //     // there a problem ith this?
+    //     let test = class.clone();
+    //     self.controller.forests.get(&self.name).unwrap().
+    //         read().unwrap().trees.iter().
+    //         filter(|(_,t)| t.score.class == test).map(|(_, x)| x).collect()
+    // }
     
     #[allow(dead_code)]
-    fn get_classes(&self) -> &Vec<String>{
-        // Return all known class lables
-        &self.d_all.class_names
-    }
+    // fn get_classes(&self) -> &Vec<String>{
+    //     // Return all known class lables
+    //     &self.d_all.class_names
+    // }
 
     
     //===============================================================
@@ -812,10 +963,10 @@ impl Population {
     // Selection algorithms.
     //
 
-    fn select(&self) -> usize {
-        // FIXME Implement choice of selection algorithm
-        Population::roulette_selection(&self.forest)
-    }
+    // fn select(&self) -> usize {
+    //     // FIXME Implement choice of selection algorithm
+    //     Population::roulette_selection(&*self.controller.forests.get(&self.name).unwrap().read().unwrap())
+    // }
 
     fn roulette_selection(forest:&Forest) -> usize {
 
@@ -887,9 +1038,9 @@ impl Population {
             false
         }
     }
-    fn add_individual(&mut self, bnd_rec:&mut Recorder) -> bool {
-        Population::_add_individual(&self.d_all, bnd_rec, &mut self.forest)
-    }
+    // fn add_individual(&mut self, bnd_rec:&mut Recorder) -> bool {
+    //     Population::_add_individual(&self.d_all, bnd_rec, &mut*self.controller.forests.get(&self.name).unwrap().write().unwrap())
+    // }
     fn _delete_worst(forest:&mut Forest, bnd_rec:&mut Recorder) {
 
         // Delete a tree from the forest that has the worst score
@@ -916,26 +1067,26 @@ impl Population {
                                 
         
     }
-    pub fn delete_worst(&mut self, bnd_rec:&mut Recorder) {
-        Population::_delete_worst(&mut self.forest, bnd_rec);
-    }
+    // pub fn delete_worst(&mut self, bnd_rec:&mut Recorder) {
+    //     Population::_delete_worst(&mut*self.controller.forests.get(&self.name).unwrap().write().unwrap(), bnd_rec);
+    // }
 
     fn _do_crossover(forest:&Forest)  -> (NodeBox, usize, usize){
         let i0 = Population::roulette_selection(forest);
         let i1 = Population::roulette_selection(forest);
         (Population::_crossover(forest, i0, i1), i0, i1)
     }
-    pub fn do_crossover(&mut self) -> (NodeBox, usize, usize){
+    // pub fn do_crossover(&mut self) -> (NodeBox, usize, usize){
 
-        // Crossover to breed individuals better at generalisation
+    //     // Crossover to breed individuals better at generalisation
 
-        // Choose a node from population to participate in crossover.
-        // The higher the score the node got last generation the
-        // higher the probability it will be selected to be
-        // participate in crossover
+    //     // Choose a node from population to participate in crossover.
+    //     // The higher the score the node got last generation the
+    //     // higher the probability it will be selected to be
+    //     // participate in crossover
 
-        Population::_do_crossover(&self.forest)
-    }
+    //     Population::_do_crossover(&*self.controller.forests.get(&self.name).unwrap().read().unwrap())
+    // }
 
     fn _mutate_tree(i:NodeBox, d_all:&Data) -> NodeBox {
         // How many nodes are there?
@@ -994,9 +1145,9 @@ impl Population {
             }
         }
     }
-    fn mutate_tree(&mut self,i:NodeBox) -> NodeBox {
-        Population::_mutate_tree(i, &self.d_all)
-    }
+    // fn mutate_tree(&mut self,i:NodeBox) -> NodeBox {
+    //     Population::_mutate_tree(i, &self.d_all)
+    // }
     
     fn _crossover(forest:&Forest, lidx:usize, ridx:usize) -> NodeBox {
         // FIXME Use references to nodes (and lifetimes?) insted of
@@ -1045,102 +1196,6 @@ impl Population {
         ret
     }
 
-    fn crossover(&mut self, lidx:usize, ridx:usize) -> NodeBox {
-        Population::_crossover(&self.forest, lidx, ridx)
-    }
-
-    
-    fn restore_trees(&self) -> Forest {
-        // Read in saved state from a file, build a population from
-        // it, and return the population
-
-         let mut trees:Forest = Forest::new();
-
-        let file = File::open(&self.pop_config.save_file).expect(format!("Cannot open {}", &self.pop_config.save_file).as_str());
-        file.lock_exclusive().expect("Failed to lock save file");
-        let buf = BufReader::new(file);
-
-        for line in buf.lines() {
-            match line {
-                Ok(l) => {
-                    let start = &l[0..5]; // Class  
-                    let class:String;
-                    if start == "Class" {
-                        let n = l.find("Score").unwrap();//expect(panic!("Badly formatted line: {}", l));
-                        class = l[5..n].to_string();
-                        if &l[n..(n+5)] == "Score" {
-                            
-                            let m = l.find("Node").unwrap();
-                            let score_str = &l[(n+5)..m];
-                            let score = score_str.parse::<f64>().unwrap();
-                            let strep = &l[m+4..];
-                            let node = NodeBox::new(Node::new_from_string(strep));
-                            let sc = if self.pop_config.rescore {
-                                // Reevaluate the trees against the
-                                // test part of the data
-                                let _sc = score_individual(&node, &self.d_all, true);
-                                //println!("class {} -> {}\tScore {} -> {}", &class, &_sc.class, score, _sc.quality);
-                                _sc
-                                    
-                            }else{
-                                // Use the saved scores
-                                Score{class:class, quality:score}
-                            };
-                            let id = trees.maxid + 1;
-                            trees.insert(strep, Tree{id:id, tree:node, score:sc});
-                        }
-                    }
-                },
-                Err(e) => panic!(e)
-            }
-        }
-        if self.pop_config.filter > 0 {
-            // Only have best self.filter trees of each class
-
-            // // First sort trees by score and length
-            // trees.sort_by(|a, b|{
-            //     let a1 = &a.score.quality;
-            //     let b1 = &b.score.quality;
-            //     match b1.partial_cmp(a1) {
-            //         Some(x) => match x {
-            //             Ordering::Equal => a.tree.count_nodes().cmp(&b.tree.count_nodes()),
-            //             Ordering::Greater => Ordering::Greater,
-            //             Ordering::Less => Ordering::Less,
-            //         },
-            //         None => panic!("Cannot compare {} and {}", a1, b1)
-            //     }
-            // });
-
-            // Build the structure that will hold the trees
-            let mut class_trees:HashMap<String,  Vec<Tree>> = HashMap::new();
-            for z in self.get_classes() {
-                class_trees.insert(z.clone(), Vec::new());
-            }
-
-            // Put trees into classes
-            for (_,t) in trees.trees.iter() {
-                let c = t.score.class.clone();
-                if class_trees.get(&c).unwrap().len() < self.pop_config.filter {
-                    class_trees.get_mut(&c).unwrap().push(t.clone());
-                }
-            }
-
-            // Reinitialise trees and check that there are enough
-            // trees on the way
-            trees.clear();
-            for ct in class_trees.keys() {
-                if class_trees.get(ct).unwrap().len() < self.pop_config.filter {
-                    eprintln!("Too few trees for class {} Have {} want {}",
-                              ct, class_trees.get(ct).unwrap().len(), self.pop_config.filter);
-                }
-                for t in class_trees.get(ct).unwrap() {
-                    // FIXME How do I avoid all this copying
-                    trees.insert(&t.tree.to_string(), t.clone());
-                }
-            }
-        }                
-        trees
-    }
 
     fn _save_trees(forest:&Forest, save_file:&str){
         
@@ -1155,12 +1210,13 @@ impl Population {
 
     }
     
-    pub fn save_trees(&self){
-        Population::_save_trees(&self.forest, self.pop_config.save_file.as_str())
+    // pub fn save_trees(&self){
+    //     Population::_save_trees(&*self.controller.forests.get(&self.name).unwrap().read().unwrap(), self.pop_config.save_file.as_str())
         
-    }
+    // }
 }
 
+#[allow(dead_code)]
 pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
                 class_names:&Vec<String>, forest:&Forest) ->
     Option<(String, String)> {
@@ -1195,7 +1251,6 @@ pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
         // a decision it will not return a finite score
         for (_, t) in forest.trees.iter() {
             // Using each classifier
-            let class = &t.score.class;
 
             // Given a input of class C and a tree (t) whose class is
             // D if C == D then score should be 1.0.  Else -1.0.  
@@ -1204,7 +1259,7 @@ pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
                 // Score::special is from training and is how well this
                 // rule performed over all training cases.
                 let quality = t.score.quality;
-                results.get_mut(class).unwrap().push((quality, score));
+                results.get_mut(&t.score.class).unwrap().push((quality, score));
             }
         }
 
@@ -1267,14 +1322,29 @@ pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
         }
     }
 
-pub fn analyse(forest:&Forest, d_all:&Data) -> PopulationAnalysis {
-
+pub fn _ensure_forest(forests:&mut HashMap<String, RwLock<Forest>>,
+                  name:&str) {
+    // Ensure there is a forest
+    match forests.get(name) {
+        None => {
+            // No forest yet for this project
+            let forest = Forest::new();
+            let lock = RwLock::<Forest>::new(forest);
+            forests.insert(name.to_string(), lock);
+        },
+        Some(_) => (), // Do not care
+    };
+}
+#[allow(dead_code)]
+pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnalysis {
+    eprintln!("1574 analyse");
     let ref index = d_all.testing_i;
     
 
     // Build a object that describes the quality of the
     // classifiers, as a set, over the test data
-    let mut pa = PopulationAnalysis::new(&d_all.class_names);            
+    let mut pa = PopulationAnalysis::new(&d_all.class_names);
+    pa.generation = generation;
 
     // Initialise counts 
     for x in d_all.class_names.iter() {
@@ -1283,6 +1353,8 @@ pub fn analyse(forest:&Forest, d_all:&Data) -> PopulationAnalysis {
     
     // Over the testing data clasify each record and compare with true
     // class
+    eprintln!("1605 Pop index.len(): {}", index.len());
+    
     for i in index {
         pa.cases = pa.cases + 1;
         let ref r = d_all.data[*i];
@@ -1313,8 +1385,10 @@ pub fn analyse(forest:&Forest, d_all:&Data) -> PopulationAnalysis {
             }
         }//老虎
     }
+    eprintln!("Population::analysis generation: {}", pa.generation);
     pa
 }
+
 
 pub fn _initialise_rand(forest:&mut Forest, d_all:&Data, bnd_rec:&mut Recorder, max_population:usize){
     // Initialise with a random tree
@@ -1331,3 +1405,137 @@ pub fn _initialise_rand(forest:&mut Forest, d_all:&Data, bnd_rec:&mut Recorder, 
         }
     }
 }        
+fn _new_generation(forest:&Forest,
+                   mutate_prob:usize,
+                   copy_prob:usize,
+                   crossover_percent:usize, 
+                   max_population:usize,
+                   d_all:&Data,
+                   bnd_rec:&mut Recorder,
+                   save_file:&str) -> Forest // New trees
+{
+
+
+    let mut new_forest = Forest::new();
+
+    // The unique id given to each tree
+    new_forest.maxid = forest.maxid + 1;
+
+    // Generate some of new population from the old population. The
+    // number of crossovers to do is (naturally) population.len()
+    // * crossover_percent/100
+    let ncross = (forest.trees.len() * crossover_percent)/100;
+    let mut nc = 0;
+
+    while nc < ncross  {
+
+        let (nb, l, r) = Population::_do_crossover(&forest);
+
+        let st = (*nb).to_string();
+        if !new_forest.has_tree_nb(&nb) {
+
+            // A unique child in next generation
+            let sc = score_individual(&nb, d_all, true);
+            let id = new_forest.maxid+1;
+            new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+            new_forest.maxid = id;
+            bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
+                                        l, r, id, &sc.quality, st));
+        }
+        nc += 1;
+    }
+    
+    // Do mutation.  Take mut_probab % of trees, mutate them, add
+    // them to the new population
+    for (_, t) in forest.trees.iter() {
+        if rng::gen_range(0, 100) < mutate_prob {
+
+            // The id of the tree being mutated
+            let id0 = t.id;
+
+            // Copy the tree and mutate it.  Loose interest in
+            // original tree now
+            let t = t.tree.copy();
+
+            let nb = Population::_mutate_tree(t, d_all);
+
+            // Convert to a string to check for duplicates and for
+            // the record 
+            let st = (*nb).to_string();
+            if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
+                // Unique in the new population
+
+                let sc = score_individual(&nb, d_all, true);
+                new_forest.maxid += 1;
+                let id = new_forest.maxid;
+                new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+                bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
+                                           id0, new_forest.maxid, st, &sc.quality).as_str());
+            }                
+        }
+    }
+
+    // Copy the best trees.
+    let mut cp = 0; // Number copied
+    let ncp = (forest.trees.len()*100)/copy_prob; // Number to copy
+    for (_, vt) in forest.score_trees.iter() {
+        //let it = forest.iter();
+        // FIXME This could be probabilistic with roulette wheel
+        // selection.
+        for st in vt.iter() {
+
+            if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
+                // Unique in the new population
+                let t = forest.trees.get(st).unwrap();
+                new_forest.insert(st, t.clone());
+                cp += 1;
+                if cp == ncp  {
+                    break;
+                }
+            }
+            // FIXME The previous break should use a label or some thing
+            if cp == ncp  {
+                break;
+            }
+        }
+    }    
+
+    // New population is created in new_forest;
+    
+    // Eliminate all trees with no valid score and sort them 
+    new_forest = Population::_cull_sort(&new_forest, bnd_rec);
+    // Adjust population
+    // let mut n1 = 0; // Number of individuals deleted
+    // let mut n2 = 0; // Number of individuals added
+    while new_forest.trees.len() > max_population {
+        Population::_delete_worst(&mut new_forest, bnd_rec);
+        //n1 += 1;
+    }
+    let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
+    while new_forest.trees.len() < max_population {
+        while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
+    }
+    if flag {
+        // Sort again as we added new individuals. FIXME cull_sort
+        // must be independant of Population for thread safety
+        new_forest = Population::_cull_sort(&new_forest, bnd_rec ); 
+    }
+
+    bnd_rec.buffer.flush().unwrap(); 
+
+    // FIXME check must be independent of Population for thread
+    // safety
+
+    if !Population::_check(&new_forest) {
+        panic!("Check failed");
+    }
+
+    // FIXME save_trees must be independant of Population for
+    // thread safety
+    Population::_save_trees(&new_forest, save_file);
+    assert!(new_forest._check_sz() == 0);
+
+    new_forest 
+}

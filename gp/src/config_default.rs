@@ -7,8 +7,44 @@ pub struct ConfigDefault {
 }
 
 impl ConfigDefault {
-    pub fn new(name:&str) -> Config {
-        // @param `name` is the name of the project
+
+    pub fn population(root:&str) -> Config {
+        // A config for the Population. Holds configuration data that
+        // is general for all projects. `root` is the root of the
+        // directory where the simulations are
+        let mut data:HashMap<String, String> = HashMap::new();
+        // Using a fixed seed makes runs deterministic and debugging
+        // much simpler
+        data.insert("seed".to_string(), "11 2 3 120".to_string());
+
+        // A small population and just enough generations to test
+        data.insert("max_population".to_string(), "100".to_string());
+        data.insert("num_generations".to_string(), "2".to_string());
+
+        data.insert("root_dir".to_string(), root.to_string());
+
+        // Probability that a individual will be copied
+        data.insert("copy_prob".to_string(), "50".to_string());
+
+        // The proportion of the population that uses crossover each
+        // generation
+        data.insert("crossover_percent".to_string(), "50".to_string());
+
+        // The percentage of data to hold back for testing
+        data.insert("training_percent".to_string(), "10".to_string());
+        data.insert("data_file".to_string(), "data.in".to_string());
+        data.insert("filter".to_string(), "0".to_string());
+        data.insert("mutate_prob".to_string(), "1".to_string());
+        data.insert("rescore".to_string(), "0".to_string());
+        Config {
+            data
+        }
+    }
+    pub fn project(name:&str) -> Config {
+        // A default config for a project @param `name` is the name of
+        // the project.  FIXME Should use `project` instead of
+        // `simulation`? Everywhere?  Holds data particular to a
+        // project.
 
         let mut data:HashMap<String, String> = HashMap::new();
 
@@ -32,22 +68,9 @@ impl ConfigDefault {
         work_dir.push('/');
         data.insert("work_dir".to_string(), work_dir.clone());
 
-        // Probability that a individual will be copied
-        data.insert("copy_prob".to_string(), "50".to_string());
-
-        // The proportion of the population that uses crossover each
-        // generation
-        data.insert("crossover_percent".to_string(), "50".to_string());
-
-        // The percentage of data to hold back for testing
-        data.insert("training_percent".to_string(), "10".to_string());
 
         data.insert("birthsanddeaths_file".to_string(), format!("{}{}_BnD.txt", work_dir, name).to_string());
-        data.insert("data_file".to_string(), "data.in".to_string());
-        data.insert("filter".to_string(), "1".to_string());
         data.insert("generations_file".to_string(), format!("{}{}_Generations.txt", work_dir, name).to_string());
-        data.insert("mutate_prob".to_string(), "1".to_string());
-        data.insert("rescore".to_string(), "0".to_string());
         data.insert("save_file".to_string(), format!("{}{}_Trees.txt", work_dir, name).to_string());
         
         Config{data:data}

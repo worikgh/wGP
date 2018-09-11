@@ -1,9 +1,8 @@
 use config::Config;
 use config_default::ConfigDefault;
-use controller::Controller;
-use controller::SimulationCommand;
 use ncurses::*;
-use population::PopulationAnalysis;
+//use population::PopulationAnalysis;
+use population::Population;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
@@ -22,6 +21,7 @@ enum State {
     ChooseProject,
     GotProject,
     Refresh,
+    Invalid, // Returned from FrontEnd::current_state if there is no state
 }
 pub struct FrontEnd {
 
@@ -29,23 +29,29 @@ pub struct FrontEnd {
     // root directory
     root_dir:String,
 
-    // controller is in charge of the simulations
-    controller:Controller,
-
     main_window:WINDOW,
     menu_window:WINDOW,
     status_window:WINDOW,
 
     // Window height and position
-    menu_h:i32, main_h:i32, status_h:i32,
-    menu_y:i32, main_y:i32, status_y:i32,
+    #[allow(dead_code)]
+    menu_h:i32, main_h:i32, //status_h:i32,
+    //menu_y:i32,
+    main_y:i32, //status_y:i32,
 
 
     state:Vec<State>,
     inp:Option<usize>, // Input from user.  A key
 
-    projects:Option<BTreeMap<usize, String>>, // Map project names to menu index
+    // Map project names to menu index.  Initialised by reading the
+    // contents of Data/ Each subdirectory is a project.  FIXME Write
+    // a process to check that a directory has everything it needs
+    projects:Option<BTreeMap<usize, String>>, 
+
     project:Option<String>, // Current project
+
+    // The set of all programme trees
+    population:Population, 
 }
 
 impl FrontEnd {
@@ -96,9 +102,7 @@ impl FrontEnd {
 
         FrontEnd{
             //config:config,
-            controller:Controller::new(root_dir.clone()),
-            root_dir:root_dir,
-
+            root_dir:root_dir.clone(),
 
             main_window:main_window,
             menu_window:menu_window,
@@ -106,27 +110,33 @@ impl FrontEnd {
 
             state:vec![State::Stopped],
             inp:None,
-            menu_h:menu_h, main_h:main_h, status_h:status_h,
-            menu_y:menu_y, main_y:main_y, status_y:status_y,
+            menu_h:menu_h, main_h:main_h, //status_h:status_h,
+            //menu_y:menu_y,
+            main_y:main_y, //status_y:status_y,
             projects:None,
             project:None,
+
+            population:Population::new(&ConfigDefault::population(root_dir.as_str())),
         }
     }
     fn current_state(&self) -> State {
-        // Assumes there is allays atleast one state
-        self.state.iter().last().unwrap().clone()
+        // Assumes there is allays atleast one state.
+        //FIXME On exit this assumption fails
+        if self.state.len() > 0 {
+            self.state.iter().last().unwrap().clone()
+        }else{
+            State::Invalid
+        }
     }
     // Functions to use ncurses top draw on screen
     fn draw_main_splash(&self) {
         // When there is nothing to see on the main screen...
-        let mut x = 0;
-        let mut y = self.main_y;
-        //werase(self.main_window);
-        let l = self.main_y+self.main_h - 3; // FIXME  Why '- 3'?
-        let c = COLS() - 1; // FIXME why `- 1`?
+
+        let l = self.main_y+self.main_h - 4; // FIXME  Why '- 4'? (-3 if no kanji)
+        let c = COLS() - 2; // FIXME why `- 2`? (-1 if no kanji)
         let x = rng::random::<usize>() % c as usize;
         let y = rng::random::<usize>() % l as usize;
-        let chars = ["x", ".", "!","@","#","$","%","^","&","*","(",")","_","+","=","-",":",";","<",">","?","/"];
+        let chars = ["大","赛","列","表","页","@","#","$","%","^","&","*","(",")","_","+","=","-",":",";","<",">","?","/"];
         let ind = rng::random::<usize>() % chars.len();
         let c = chars[ind];
         let r =  mvwprintw(self.main_window, y as i32, x as i32, c);
@@ -136,7 +146,8 @@ impl FrontEnd {
         redraw(self.main_window);
     }
 
-    fn display_project(& self, project:&str) {
+
+    fn display_project(&mut self, project:&str) {
 
         // Display project status
 
@@ -148,8 +159,6 @@ impl FrontEnd {
         // ======================
         // Status
         
-        let status = &self.controller.get_status(project);
-
         // Header
         if wattron(self.main_window, A_UNDERLINE()) != 0 {
             panic!("Failed wattron");
@@ -170,80 +179,99 @@ impl FrontEnd {
         y_status = y_status+1;
 
 
-        // Population
-        if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Population: {}", status.population)) != 0 {
-            panic!("Failed mvprint");
-        }
-        y_status = y_status+1;
 
-        // Cleared by front end
-        if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Cleared: {:?}", status.cleared)) != 0 {
-            panic!("Failed mvprint");
-        }
-        y_status = y_status+1;
+        match self.population.status(project) {
+            Err(err) =>
+            // Simulation does not exist, yet, so cannot display status or analysis
+            {
+                if mvwprintw(self.main_window, y_status, x_status,
+                             &format!("{}", err)) != 0 {
+                    panic!("Failed mvprint");
+                }},
+            Ok(status) => {
 
-        // Simulation running state
-        if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Running: {:?}", status.running)) != 0 {
-            panic!("Failed mvprint");
-        }
-        y_status = y_status+1;
+                // Population
+                if mvwprintw(self.main_window, y_status, x_status,
+                             &format!("Population: {}", status.population)) != 0 {
+                    panic!("Failed mvprint");
+                }
+                y_status = y_status+1;
 
-        // Generation
-        if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Generation: {:?}", status.generation)) != 0 {
-            panic!("Failed mvprint");
-        }
-        y_status = y_status+1;
+                // Cleared by front end
+                if mvwprintw(self.main_window, y_status, x_status,
+                             &format!("Cleared: {:?}", status.cleared)) != 0 {
+                    panic!("Failed mvprint");
+                }
+                y_status = y_status+1;
 
-        // Command
-        if mvwprintw(self.main_window, y_status, x_status,
-                     &format!("Command: {:?}", status.command)) != 0 {
-            panic!("Failed mvprint");
-        }
-        //  End of status display
-        //=======================
-        //
-        // Analysis display
+                // Simulation running state
+                if mvwprintw(self.main_window, y_status, x_status,
+                             &format!("Running: {:?}", status.running)) != 0 {
+                    panic!("Failed mvprint");
+                }
+                y_status = y_status+1;
 
-        if let Some(ref analysis) = status.analysis {
+                // Generation
+                if mvwprintw(self.main_window, y_status, x_status,
+                             &format!("Generation: {:?}", status.generation)) != 0 {
+                    panic!("Failed mvprint");
+                }
 
-            // A analysis is available
 
-            let x_anal = 30;  // Column for display
-            let mut y_anal = 1;  // Each line
+                //  End of status display
+                //=======================
+                //y_anal = y_anal+1;
 
-            // Heading
-            if wattron(self.main_window, A_UNDERLINE()) != 0 {
-                panic!("Failed wattron");
-            }
-            if mvwprintw(self.main_window, y_anal, x_anal,
-                         format!("Analysis Gen: {}", analysis.generation).as_str()) != 0 {
-                panic!("Failed mvwprintw");
-            }
-            if wattroff(self.main_window, A_UNDERLINE()) != 0 {
-                panic!("Failed wattroff");                
-            }
-            y_anal = y_anal+2; // Leave a blank line
+                // Analysis display
+                let x_anal = 30;  // Column for display
+                let mut y_anal = 1;  // Each line
 
-            // Summary of results
-            if mvwprintw(self.main_window, y_anal, x_anal,
-                         format!("Q: {:.2}%", 100.0 * analysis.correct as f64/analysis.cases as f64).as_str()) != 0 {
-                panic!("Failed mvwprintw");
-            }
-            y_anal = y_anal+1;
-            
-            if mvwprintw(self.main_window, y_anal, x_anal,
-                         format!("Cases {} Incorrect: {} Correct: {} Unclassified: {}",
-                                 analysis.cases, analysis.incorrect, analysis.correct,
-                                 analysis.cases - analysis.classified).as_str()) != 0 {
-                panic!("Failed mvwprintw");
-            }
-            //y_anal = y_anal+1;
-            
-        }
+                match status.analysis {
+                    None => {
+                        if wattron(self.main_window, A_UNDERLINE()) != 0 {
+                            panic!("Failed wattron");
+                        }
+                        if mvwprintw(self.main_window, y_anal, x_anal, "No Analysis") != 0 {
+                            panic!("Failed mvwprintw");
+                        }
+                        if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+                            panic!("Failed wattroff");                
+                        }
+                    },
+                    Some(pa) => {
+                        // A analysis ready
+
+                        // Heading
+                        if wattron(self.main_window, A_UNDERLINE()) != 0 {
+                            panic!("Failed wattron");
+                        }
+                        if mvwprintw(self.main_window, y_anal, x_anal,
+                                     format!("Analysis Gen: {}", pa.generation).as_str()) != 0 {
+                            panic!("Failed mvwprintw");
+                        }
+                        if wattroff(self.main_window, A_UNDERLINE()) != 0 {
+                            panic!("Failed wattroff");                
+                        }
+                        y_anal = y_anal+2; // Leave a blank line
+
+                        // Summary of results
+                        if mvwprintw(self.main_window, y_anal, x_anal,
+                                     format!("Q: {:.2}%", 100.0 * pa.correct as f64/pa.cases as f64).as_str()) != 0 {
+                            panic!("Failed mvwprintw");
+                        }
+                        y_anal = y_anal+1;
+                        
+                        if mvwprintw(self.main_window, y_anal, x_anal,
+                                     format!("Cases {} Incorrect: {} Correct: {} Unclassified: {}",
+                                             pa.cases, pa.incorrect, pa.correct,
+                                             pa.cases - pa.classified).as_str()) != 0 {
+                            panic!("Failed mvwprintw");
+                        }
+
+                    },
+                };
+            },
+        };
         redraw(self.main_window);
     }
 
@@ -292,10 +320,9 @@ impl FrontEnd {
     }
 
     fn project_screen(&mut self) -> bool {
-        // state == GotProject 
-        self.make_menu(&vec!["Create", "Refresh Status", "Analyse", "Configuration", "Utilise"]);
-        if let Some(ref s) =  self.project {
-            self.display_project(s.as_str());
+        self.make_menu(&vec!["Create", "Analyse", "Refresh (Delete forest)", "Utilise"]);
+        if let Some(ref p) = self.project.clone() {
+            self.display_project(p.as_str());
         }
         true
     }
@@ -333,10 +360,15 @@ impl FrontEnd {
 
     fn update_display(&mut self) -> bool{
         let state = self.current_state();
-        // eprintln!("update_display {:?} stack size: {}", state, self.state.len());
         match state {
+            State::Invalid => panic!("State: {:?}",state),
             State::Starting => self.start_screen(),
-            State::Refresh => true,
+            State::Refresh => {
+                // Pop refresh off the sate stack so that the display
+                // is updated ith the state that is being refreshed
+                self.state.pop(); // Assumes state.len() > 0
+                self.project_screen()
+            },
             State::Stopped => true,
             State::DisplayConfig => true,
             State::GotProject => self.project_screen(),
@@ -346,7 +378,8 @@ impl FrontEnd {
             },
         }
     }
-    fn state_transition(&mut self) -> bool{
+
+    fn state_transition(& mut self) -> bool{
         // Return false to exit programme
 
         let state = self.current_state();
@@ -356,41 +389,45 @@ impl FrontEnd {
             if key == 0 {
                 // Going back a state...
                 self.inp = None; // Consume
-                self.state.pop(); // Going back a state Hack to make
-                // the splash screen look good.  It does not clear
-                // itself each time draw_main_splash is called (it
-                // builds up a picture, random as I write), so needs
-                // to be cleared before it is displayed
-                if self.current_state() == State::Starting {
-                    werase(self.main_window);
-                }
+
+                self.state.pop(); // Going back a state
+
                 return if self.state.len() == 0 {
                     // No states left
                     false
                 }else{
+
                     // FIXME This is turning into spaghetti code.
                     // Must be a better way to manage this
-                    match self.current_state() {
+                    if  self.current_state() == State::ChooseProject {
                         // Reset current project
-                        State::ChooseProject => self.project = None,
-                        _ => (),
+                        self.project = None;
                     }
-                        
+                    
+                    // Hack to make the splash screen look good.  It does
+                    // not clear itself each time draw_main_splash is
+                    // called (it builds up a picture, random as I write),
+                    // so needs to be cleared before it is displayed
+                    if self.current_state() == State::Starting {
+                        werase(self.main_window);
+                    }
+
                     true
                 }
             }
         }
         
+        // Key is not 0
         let ret = match state {
+            State::Invalid => panic!("State: {:?}",state),
             State::Starting => {
 
                 // If there is some key board input process it
                 if let Some(key) = self.inp {
-                    self.inp = None; // Consume
                     if let Some(s) = self.handle_key(key, state) {
-                        eprintln!("Before push stack size {}", self.state.len());
                         self.state.push(s);
                     }
+                    self.inp = None; // Consume
                 }
                 true
             },
@@ -405,7 +442,7 @@ impl FrontEnd {
                 if let Some(key) = self.inp {
                     if let Some(s) = self.handle_key(key, state) {
                         self.state.push(s);
-                    }
+                    }                    
                     self.inp = None; // Consume
                 }
                 true
@@ -413,15 +450,14 @@ impl FrontEnd {
             State::ChooseProject => {
                 // Get the key pressed....
                 if let Some(key) = self.inp {
-                    self.inp = None; // Consume
                     if let Some(s) = self.handle_key(key, state) {
                         self.project = Some(self.projects.as_ref().unwrap().get(&key).unwrap().clone());
-                        eprintln!("Choosing {:?}", self.project);
                         self.state.push(s);
                     }else{
                         // A key that is unrecognised
                         eprintln!("state_transition called in ChooseProject. Unrecognised key {}", key);
                     }
+                    self.inp = None; // Consume
                 }else{
                     panic!("state_transition called in ChooseProject state with no input");
                 }
@@ -431,12 +467,12 @@ impl FrontEnd {
         ret
     }
 
-    // State transition functions.  Called with state
-
-    
-fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
-    // Handle a keypress.  FIXME `key` i the raw ASCII(?) minus 48.  Works for 0-9
-    match state {
+    // From current state and key that is pressed do the action for
+    // this state and determine the next state
+    fn handle_key(& mut self, key:usize, state:State) -> Option<State>{
+        // Handle a keypress.  FIXME `key` i the raw ASCII(?) minus 48.  Works for 0-9
+        match state {
+            State::Invalid => panic!("State: {:?}",state),
             State::Starting => match key {
                 1 => {
                     // Choose project
@@ -460,55 +496,55 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
                 }
             },
             State::GotProject => {
-                eprintln!("handle_key {} {:?} Start", key, state);
-                // Check the input
-                if let Some(c) = self.inp {
-                    // Got a key
-                    eprintln!("handle_key {} {:?} Got key {}", key, state, c);
-                    match c {
-                        1 => {
-                            // Run a simulation.  Start by build a
-                            // configuration object.  This is top
-                            // level configuration that can be
-                            // overridden by project configuration
-                            // First load default data.  Either in the
-                            // root_dir/.gp_config or hard coded
-                            // DefaultConfig
-                            let name = self.project.as_ref().unwrap();
-                            eprintln!("run {}", name);
-                            //let config = self.default_config(name.as_str());
+                match key {
+                    1 => {
+                        // Run a simulation.  Start by build a
+                        // configuration object.  This is top
+                        // level configuration that can be
+                        // overridden by project configuration
+                        // First load default data.  Either in the
+                        // root_dir/.gp_config or hard coded
+                        // DefaultConfig
+                        let name = self.project.as_ref().unwrap();
+                        eprintln!("run {}", name);
+                        let config = self.default_config(name.as_str());
 
-                            // Use the controller to run the simulation.  If it
-                            // fails to launch the status is set appropriately
-                            let status = match self.controller.run_simulation(name) {
-                                Ok(_) => format!("{} started", name),
-                                Err(s) => s.to_string(),
-                            };
-                            eprintln!("runing? {}", name);
-                            self.status_line(&status);
-                            None
-                        },
-                        2 => Some(State::Refresh),
-                        3 => {
-                            // Analyse
-
-                            let name = self.project.as_ref().unwrap();
-                            eprintln!("analyse {}", name);
-
-                            // FIXME Use a channel.  This sucks!
-                            self.controller.set_command(name, SimulationCommand::Analyse);
-
-                            None
-                        },
-                        4 => {
-                            // Display config
-                            None
-                        },
-                        _ => None,
-                    };
-                    None
-                }else{
-                    None
+                        // Create the simulation.  
+                        match self.population.create(name, &config) {
+                            Err(err) => self.status_line(err.as_str()),
+                            Ok(_) => {
+                                // Run the simulation.  If it
+                                // fails to launch the status is
+                                // set appropriately
+                                let status = match self.population.start(name) {
+                                    Ok(_) => format!("{} started", name),
+                                    Err(s) => s.to_string(),
+                                };
+                                self.status_line(status.as_str());
+                            },
+                        }
+                        None
+                    },
+                    2 => {
+                        // Do a Analysis
+                        match self.project {
+                            None => self.status_line(&format!("No project")),// FIXME Panic?
+                            Some(ref p) => self.population.analyse(p),
+                        };
+                        None
+                    },
+                    3 => {
+                        // Delete 
+                        match self.project {
+                            None => self.status_line("No project to delete"),
+                            Some(p) => {
+                                self.population.delete(p);
+                                self.project = None;
+                            },
+                        };
+                        None
+                    },
+                    _ => None,
                 }
             },
             State::Stopped => None,
@@ -517,36 +553,43 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
         }
     }
     // End of state transition functions.
-    pub fn fe_start(&mut self) {
+
+    pub fn fe_start(& mut self) {
         // Entry point
         self.state = vec![State::Starting];
-        eprintln!("fe_start stack size: {}", self.state.len());
         // Event loop of state machine
         loop {
-            //let state = self.state.iter().last().unwrap().clone();
+
             // Make sure what we display matches the state
             self.update_display();
-            self.status_line(&format!("State: {:?}", self.current_state()));
             let inp = wgetch(self.menu_window);
+
             if inp == ERR {
                 // No input available.  Need to sleep
                 sleep(Duration::new(0, 50000000)); // Fastest is 2 times a second
+                continue;
             }else{
-                let inp = inp  as usize - 48;
-                self.inp = Some(inp);
-                //eprintln!("Before transition State {:?} stack size: {}", state, self.state.len());
-                if self.state_transition() == false{
-                    break;
+
+                if inp > 47 && inp < 58 {
+                    // FIXME This is apalling! But currently only
+                    // numbers are used as input
+                    let inp = inp  as usize - 48;
+                    self.inp = Some(inp);
+                    if self.state_transition() == false{
+                        break;
+                    }
+                }else{
+                    eprintln!("Invalid input code: {}", inp);
                 }
             }
-            self.status_line(&format!("State: {:?}", self.current_state()));
         }
         fe_shut();
     }
 
 
+    #[allow(dead_code)]
     fn do_display_config(&self, name:&str)  {
-        // Level One
+
         let config = self.default_config(name);
 
         let mut keys = config.data.keys();
@@ -561,153 +604,8 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
         self.fe_main(&cfg_strings);
     }
 
-    // End of level one
-    //------------------------------------------
-    // Level two
-
-    // fn do_project(& mut self, name:&str) {
-    //     // Level two
-
-    //     // Display a project's status and options on
-    //     // starting/stopping/resuming/analysing it or using it to
-    //     // classify a example
-    //     loop {
-    //         werase(self.main_window);
-
-    //         let status = self.controller.get_status(name);
-    //         let projects:Vec<_> = vec!["Create", "Refresh Status",
-    //                                    "Analyse", "Configuration", "Utilise"];
-
-    //         // Display status
-    //         // Name:Sting
-    //         // cleared:bool,
-    //         // running:bool,
-    //         // generation:usize,
-    //         // path:String,
-    //         let x_status = 1; // Start column for status
-    //         let mut y_status = 1; // Status lines
-    //         if wattron(self.main_window, A_UNDERLINE()) != 0 {
-    //             panic!("Failed wattron");
-    //         }
-    //         if mvwprintw(self.main_window, y_status, x_status, "Status") != 0 {
-    //             panic!("Failed mvwprintw");
-    //         }
-    //         y_status = y_status+2; // Leave a blank line
-    //         if wattroff(self.main_window, A_UNDERLINE()) != 0 {
-    //             panic!("Failed wattroff");
-    //         }
-
-    //         if mvwprintw(self.main_window, y_status, x_status,
-    //                      &format!("Name: {}", name)) != 0 {
-    //             panic!("Failed mvprint");
-    //         }
-    //         y_status = y_status+1;
-    //         if mvwprintw(self.main_window, y_status, x_status,
-    //                      &format!("Cleared: {:?}", status.cleared)) != 0 {
-    //             panic!("Failed mvprint");
-    //         }
-    //         y_status = y_status+1;
-    //         if mvwprintw(self.main_window, y_status, x_status,
-    //                      &format!("Running: {:?}", status.running)) != 0 {
-    //             panic!("Failed mvprint");
-    //         }
-    //         y_status = y_status+1;
-    //         if mvwprintw(self.main_window, y_status, x_status,
-    //                      &format!("Generation: {:?}", status.generation)) != 0 {
-    //             panic!("Failed mvprint");
-    //         }
-    //         y_status = y_status+1;
-    //         if mvwprintw(self.main_window, y_status, x_status,
-    //                      &format!("Path: {}", status.path)) != 0 {
-    //             panic!("Failed mvprint");
-    //         }
-    //         //y_status = y_status+1;
-
-    //         // Get configuration object (if running) to write a
-    //         // section on the files in the project's directory
-    //         let x_files = 30; // Starting column for files section
-    //         let mut y_files = 1;  // Each line...
-    //         if wattron(self.main_window, A_UNDERLINE()) != 0 {
-    //             panic!("Failed wattron");
-    //         }
-    //         if mvwprintw(self.main_window, y_files, x_files, "Files") != 0 {
-    //             panic!("Failed mvwprintw");
-    //         }
-    //         if wattroff(self.main_window, A_UNDERLINE()) != 0 {
-    //             panic!("Failed wattroff");
-    //         }
-    //         y_files = y_files+2; // Leave a blank line
-    //         let config = match self.controller.get_config(name) {
-    //             Some(c) => // Got a handle to a thread running simulation
-    //                 c,
-    //             None => {
-    //                 eprintln!("do_project default config");
-    //                 self.default_config(name)
-    //             },
-    //         };
 
 
-    //         // Check if the file that describes a population is there
-    //         // save_file
-    //         let save_file = match config.get_string("save_file") {
-    //             Some(f) => f,
-    //             None => "<NONE>".to_string(),
-    //         };
-    //         let save_file_path = format!("{}Data/{}/{}",
-    //                                      self.root_dir, name, save_file);
-    //         let save_file_exists = Path::new(save_file_path.as_str()).is_file();
-    //         let save_file_exists = if save_file_exists {
-    //             eprintln!("Existing");
-    //             "Exists"
-    //         }else{
-    //             eprintln!("Not Existing {}", save_file_path);
-    //             ""
-    //         };
-
-    //         let msg = format!("Trees: {} {}", save_file_exists, save_file);
-    //         if mvwprintw(self.main_window, y_files, x_files, msg.as_str()) != 0 {
-    //             panic!("Failed mvwprintw");
-    //         }
-
-    //         redraw(self.main_window);
-
-    //         let c = self.make_menu(&projects);
-    //         // Got a key.
-
-    //         match c {
-    //             // 0 allways sends us back
-    //             0 => break,
-
-    //             1 => {
-    //                 // Run a simulation.  Start by build a
-    //                 // configuration object.  This is top level
-    //                 // configuration that can be overridden by project
-    //                 // configuration First load default data.  Either
-    //                 // in the root_dir/.gp_config or hard coded
-    //                 // DefaultConfig
-    //                 let config = self.default_config(name);
-
-    //                 // Use the controller o run the simulation.  If it
-    //                 // fails to launch the status is set appropriately
-    //                 let status = match self.controller.run_simulation(&config) {
-    //                     Ok(_) => "Ok".to_string(),
-    //                     Err(s) => s.to_string(),
-    //                 };
-    //                 self.status_line(&status);
-    //             },
-    //             3 => {
-    //                 // Analyse
-    //             },
-    //             4 => {
-    //                 // Display config
-    //             }
-
-    //             _ => (),
-    //         }
-
-
-    //     }
-    // }
 
     // End of rational ordering of functions....
     //---------------------------------------------------------
@@ -720,47 +618,19 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
         let mut config =
             match File::open(format!("{}.gp_config", self.root_dir)){
                 Ok(f) => Config::new_file(f),
-                Err(_) => ConfigDefault::new(name),
+                Err(_) => ConfigDefault::population(self.root_dir.as_str()),
             };
-
-        // Update the configuration file.  Find the project <name> and
-        // if it exists check for a ".gp_config" file.  If it is found
-        // use that to update the config.  If it does not then adjust
-        // some fields in the default: The root_dir may not be
-        // accurate as the file may have been moved, and the "name" is
-        // particular to a simulation
-        match self.find_project_config(name) {
-            Some(cfg) => {
-                eprintln!("default_config Found one");
-                for (k, v) in cfg.data.iter() {
-                    config.data.insert(k.to_string(), v.to_string());
-                }
-            },
-            None => {
-                eprintln!("default_config Found none");
-
-                config.data.insert("root_dir".to_string(),
-                                   self.root_dir.clone());
-                config.data.insert("name".to_string(), name.to_string());
-            },
-        };
+        // Check if there is a specific configuration for this project
+        let project_config =
+            match File::open(format!("{}/Data/{}/.gp_config", self.root_dir, name)){
+                Ok(f) => Config::new_file(f),
+                Err(_) => ConfigDefault::project(name),
+            };
+        for (k, v) in project_config.data.iter() {
+            config.data.insert(k.to_string(), v.to_string());
+        }
         config
     }
-
-    fn find_project_config(&self, name:&str) -> Option<Config> {
-        // If the named project exists and has a configuration file
-        // build a Config object and return it
-        let path = format!("{}Data/{}/.gp_config", self.root_dir, name);
-        let cfg_file = Path::new(path.as_str());
-        eprintln!("find_project_config {:?}", cfg_file);
-        if cfg_file.is_file() {
-            // A project configuration file exists
-            Some(Config::new(path.as_str()))
-        }else{
-            None
-        }
-    }
-
 
     // fn edit_config(&self, config:&Config) -> Config {
     //     // This is waiting on developing technology to edit data
@@ -769,6 +639,7 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
 
 
 
+    #[allow(dead_code)]
     fn fe_main(&self, list:&Vec<String>) {
         // Display a list in the main pane
         let x = 1;
@@ -799,9 +670,6 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
             panic!("Failed mvwprint");
         }
         redraw(self.menu_window);
-        // let ret = wgetch(self.menu_window) as usize - 48;
-        // eprintln!("make_menu Got {} ", ret);
-        // ret
     }
 
     fn status_line(& self, msg:&str) {
@@ -810,10 +678,6 @@ fn handle_key(&mut self, key:usize, state:State) -> Option<State>{
             panic!("Failed mvwprint");
         }
         redraw(self.status_window);
-        //eprintln!("status line: {}", msg);
-    }
-
-    fn do_analysis_window(&self, _pa:&PopulationAnalysis ){
     }
 }
 
@@ -822,12 +686,6 @@ fn fe_shut(){
     /* Terminate ncurses. */
     endwin();
 }
-
-
-
-
-
-
 
 fn redraw(win:WINDOW) {
     box_(win, 0, 0);

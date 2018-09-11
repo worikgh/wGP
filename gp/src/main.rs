@@ -1,24 +1,21 @@
 #[macro_use] extern crate lazy_static;
-
 extern crate fs2;
+extern crate ncurses;
 extern crate rand;
 extern crate statistical;
-extern crate ncurses;
-
-mod front_end;
 mod config;
 mod config_default;
+mod controller;
 mod data;
+mod front_end;
 mod inputs;
 mod node;
 mod population;
-mod controller;
 mod rng;
 mod score;
-use config::Config;
 use data::Data;
 use front_end::FrontEnd;
-use population::Population;
+use node::NodeBox;
 use score::score_individual;
 use std::env;
 use std::fs::File;
@@ -28,8 +25,6 @@ use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
 
-use node::NodeBox;
-//use node::Node;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,7 +151,6 @@ impl Recorder {
     // stopping two Recorders writing to the same file in confusing
     // ways
     fn new(file_name:&str) -> Recorder {
-        eprintln!("Recorder new. Buffer name: {}", file_name);
         Recorder{
             buffer:BufWriter::new(OpenOptions::new()
                                   .append(true)
@@ -175,41 +169,13 @@ impl Recorder {
 }
 
 fn main() {
-    //println!("Start");
-    // Get configuration file.  Will use file names 'config' if no
-    // file name provided as a argument FIXME:  Don't have a default!!!
+    let  mut fe = FrontEnd::new();
 
     let args: Vec<_> = env::args().collect();
-    let cfg_file:String;
-    eprintln!("args.len() {}", args.len() );
+
     if args.len() == 1 {
-        eprintln!("In main");
-        FrontEnd::new().fe_start();
+        fe.fe_start();
     }else{
-        cfg_file = args[1].clone();
-
-        let config = Config::new(cfg_file.as_str());
-
-        // Load configuration data
-        let num_generations = config.get_usize("num_generations").unwrap();
-        let seed = config.get_string("seed").unwrap(); // The seed is a string of usize numbers
-        let seed:Vec<u32> = seed.split_whitespace().map(|x| x.parse::<u32>().unwrap()).collect();
-        
-
-
-        // The source of entropy.  
-        rng::reseed(seed.as_slice());
-
-        // Create a population. 
-        let mut population = Population::new(&config);
-        population.initialise_rand();
-
-
-
-        for generation in 0..num_generations {
-            // Main loop
-            
-            population.new_generation(generation);
-        }
+        panic!("Deprecated code path");
     }        
 }

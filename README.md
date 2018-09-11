@@ -5,7 +5,7 @@
 A system using genetic programming to automatically generate
 classifiers.  
 
-A classifier is expressed recursively as a tree.  
+Each classifier is a genetic programming tree expressed recursively:
 
 ```rust
  struct Node {
@@ -16,13 +16,63 @@ A classifier is expressed recursively as a tree.
  }
 ```
 
-Each tree is labled with the class it classifies for.  When it
-classifies a case the ideal classifier will output `1` if the case is
-of the class and `-1` if the case is not.  Classifiers are implemented
-as programme trees and prepared using genetic programming.
+Each tree is labelled with the class it classifies for.  Output 1 for
+examples of a class, -1 for counter examples.
 
-To classify a new case a collection, `forest`, of trees is used.  The
-class with the highest total is the predicted class.
+Each classifier is evolved using the genetic programming algorithm
+with training data. Each classifier is associated with  a `Score` object:
+
+```rust
+#[derive(PartialEq, Debug, Clone)]
+pub struct Score {
+    pub quality:f64,
+    pub class:String,
+}
+```
+
+Score::quality is defined as the `1/(1+S)`, `S` is the sum of the
+classification error over the training data.
+
+Classification error is currently calculated using `Hinge Loss`.
+Given T in 1.0, -1.0 the true classification of the case and Y the
+estimate of the classifier, Hinge Loss is:
+
+```C
+1.0-T*Y < 0 ? 0.0 : 1.0-T*Y
+```
+
+A classifier is assigned to a class by evaluating a `Score` for each
+class and choosing the one with the highest score.
+
+FIXME: There is no measure of differentiation.  How got a classifier
+is at telling one class from another.
+
+When it classifies a case the ideal classifier will output `1` if the
+case is of the class and `-1` if the case is not.  Classifiers are
+implemented as programme trees and prepared using genetic programming.
+
+To classify a new case a collection, `Forest`, of trees is used.  Each
+classifier examines the case and produces a result in [-1.0, 1.0].
+
+For each class, calculate the mean score for classifiers in the Forest
+specialised for that class, as:
+
+
+```
+sum(result * Score::quality)/#classifiers
+```
+
+The class with the highest score is selected.
+
+The value returned from `classify` in population.rs is 
+```
+Option<(String, String)>
+```
+
+The first `String` in the 2-tuple is the inning class.  The second
+string is in the format: `<class> <score>,...` listing all classes and
+the score for the class in descending score order.
+
 
 ## Operators implemented ##
 

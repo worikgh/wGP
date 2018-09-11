@@ -19,6 +19,7 @@ impl Config {
         }
         Config{data:data}
     }
+    #[allow(dead_code)]
     pub fn new(cfg_file:&str)-> Config {
         let file = File::open(cfg_file).unwrap();
         Config::new_file(file)
@@ -49,6 +50,7 @@ impl Config {
             _ => panic!("Failed config. {} as usize", k),
         }
     }
+    #[allow(dead_code)]
     pub fn specialise(&self, name:&str) -> Config {
 
         // Specialise a configuration object for running a particular

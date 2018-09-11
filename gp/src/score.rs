@@ -23,6 +23,9 @@ use super::rng;
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Score {
+
+    // FIXME Need differentiation also
+    
     // Fitness calculated when classifying to self.class.unwrap()
     pub quality:f64,
 
@@ -45,6 +48,7 @@ impl Score {
         self.quality.is_finite()
     }
 
+    #[allow(dead_code)]
     pub fn copy(&self) -> Score {
         let class = self.class.clone();
         Score{quality:self.quality, class:class}
@@ -75,14 +79,14 @@ impl PartialOrd for Score {
 }
 
 #[inline]
-fn loss_function(y_:f64, y:f64) -> f64 {
-    // y_ is the estimate, y the true value
+fn loss_function(t:f64, y:f64) -> f64 {
+    // y is the estimate, t the true value 
 
     // True value is -1.0 if this the input is not a member of the class
     // the individual tests for, and 1.0 if it is
     
     // Hinge loss
-    let loss = 1.0-y_*y;
+    let loss = 1.0-t*y;
     if loss < 0.0 {
         0.0
     }else{
@@ -122,6 +126,10 @@ pub fn score_individual(
     let mut best_s = 0.0;// std::f64::MIN;
 
     let mut inputs = Inputs::new();
+
+    // FIXME To enable differentiation here store each Score for each
+    // class and store the difference between the Score::quality for
+    // the best and the second best
     for  class in d.class_names.iter() {
 
         // Store each distance from the estimate to the actual value
@@ -162,6 +170,7 @@ pub fn score_individual(
             let l = loss_function(t, e);
             y_d.push(l);
         }
+
         let mut s = (1.0/(index.len() as f64))*
             y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
         if s.is_finite() {
