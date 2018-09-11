@@ -20,7 +20,6 @@ enum State {
     DisplayConfig,
     ChooseProject,
     GotProject,
-    Refresh,
     Invalid, // Returned from FrontEnd::current_state if there is no state
 }
 pub struct FrontEnd {
@@ -363,12 +362,6 @@ impl FrontEnd {
         match state {
             State::Invalid => panic!("State: {:?}",state),
             State::Starting => self.start_screen(),
-            State::Refresh => {
-                // Pop refresh off the sate stack so that the display
-                // is updated ith the state that is being refreshed
-                self.state.pop(); // Assumes state.len() > 0
-                self.project_screen()
-            },
             State::Stopped => true,
             State::DisplayConfig => true,
             State::GotProject => self.project_screen(),
@@ -430,11 +423,6 @@ impl FrontEnd {
                     self.inp = None; // Consume
                 }
                 true
-            },
-            State::Refresh => {
-                // Pop Refresh off state stack and recurse
-                self.state.pop();
-                self.state_transition()
             },
             State::Stopped => true,
             State::DisplayConfig => true,
@@ -537,11 +525,14 @@ impl FrontEnd {
                         // Delete 
                         match self.project {
                             None => self.status_line("No project to delete"),
-                            Some(p) => {
-                                self.population.delete(p);
-                                self.project = None;
+                            Some(ref p) => {
+                                match self.population.delete(p.as_str()){
+                                    Ok(_) => (),
+                                    Err(err) => eprintln!("Failed to delete project: {}  Err: {}", p, err),
+                                };
                             },
                         };
+                        self.project = None;
                         None
                     },
                     _ => None,
@@ -549,7 +540,6 @@ impl FrontEnd {
             },
             State::Stopped => None,
             State::DisplayConfig => None,
-            State::Refresh => None,
         }
     }
     // End of state transition functions.
