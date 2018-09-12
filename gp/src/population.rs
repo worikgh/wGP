@@ -1337,7 +1337,7 @@ pub fn _ensure_forest(forests:&mut HashMap<String, RwLock<Forest>>,
 }
 #[allow(dead_code)]
 pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnalysis {
-    eprintln!("1574 analyse");
+
     let ref index = d_all.testing_i;
     
 
@@ -1353,7 +1353,6 @@ pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnaly
     
     // Over the testing data clasify each record and compare with true
     // class
-    eprintln!("1605 Pop index.len(): {}", index.len());
     
     for i in index {
         pa.cases = pa.cases + 1;
@@ -1385,7 +1384,6 @@ pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnaly
             }
         }//老虎
     }
-    eprintln!("Population::analysis generation: {}", pa.generation);
     pa
 }
 
