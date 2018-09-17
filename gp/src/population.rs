@@ -35,7 +35,7 @@
 // too much time).  Return Result<PopulationAnalysis, String>,
 // Ok(<PopulationAnalysis>) or Err(<error message>)
 
-// status: Passed a name return Result<PopulationStatus, String>.  If
+// status: Passed a name return Result<SimulationStatus, String>.  If
 // the named simulation exists return Ok(<status object>).  Else
 // Err(<error message>)
 
@@ -228,7 +228,7 @@ impl Forest {
 }
 
 
-struct SimulationRecord {
+pub struct SimulationRecord {
     // The record that stores all that a simulation needs.  The
     // SimulationStatus (FIXME Change tht name as it s used to pass
     // commands to simulation as well), and the Forest are kept in
@@ -239,7 +239,7 @@ struct SimulationRecord {
     forest:Arc<RwLock<Forest>>,
     handle:Option<thread::JoinHandle<()>>,
     config:Config,
-    data:Data,
+    data:Data, // pub for FrontEnd
 
     // Hold this when doing a simulation to stop two simultaneous
     // analyses
@@ -258,9 +258,14 @@ impl SimulationRecord {
             forest:Arc::new(RwLock::new(Forest::new())),
             handle:None,
             config:config.copy(),
-            data:data,
+            data:data, 
             analysis_mutex:Arc::new(Mutex::<()>::new(())),
         }
+    }
+
+    // The front end needs to know how many inputs to provide
+    pub fn get_num_fields(&self) -> usize {
+        self.data.input_names.len()
     }
 }
 pub struct Population {
@@ -268,7 +273,7 @@ pub struct Population {
     // There is one Population
     
     // Maps the name of a simulation to data about it including the forest
-    simulations:HashMap<String, SimulationRecord>,
+    pub simulations:HashMap<String, SimulationRecord>,
 
     // Configuration that applies to all simulations
     pop_config:PopulationConfig,
@@ -282,7 +287,7 @@ struct PopulationConfig {
     // For random number generator to make simulations repeatable
     seed:Vec<u32>,
     num_generations:usize,
-
+    
     crossover_percent:usize,
     mutate_prob:usize,
     copy_prob:usize,
@@ -408,15 +413,23 @@ impl PopulationConfig {
 #[derive(Clone, Debug)]
 pub struct SimulationStatus {
 
-    // FIXME  What is the difference betwween SimulationStatus and PopulationStatus?
     // FIXME These two variables can be one, surely?
     pub cleared:bool, // Front end unsets this to stop simulation gently
     pub running:bool, // Simulation re/sets this as it starts/stops
 
-    pub generation:usize, // Current generation
+    // Current generation and upper limit
+    pub generation:usize, 
+
+
     pub start:Instant, // When started
     pub analysis:Option<PopulationAnalysis>, 
-    pub population:usize, // Number of trees in forest FIXME Necessary?
+
+    // Number of trees in forest
+    pub population:usize,
+
+    pub max_generation:usize, 
+    pub max_population:usize,
+    
 }
 
 impl SimulationStatus {
@@ -426,7 +439,9 @@ impl SimulationStatus {
             cleared:cleared,
             running:false,
             generation:0,
+            max_generation:0,
             population:0,
+            max_population:0,
             analysis:None,
         }
     }
@@ -437,26 +452,15 @@ impl SimulationStatus {
             cleared:self.cleared,
             running:self.running,
             generation:self.generation,
+            max_generation:self.generation,
             population:self.population,
+            max_population:self.population,
             analysis:self.analysis.clone(),
         }
     }
 }
 
 // #[derive(Debug, Clone)]
-// pub enum PopulationStatus
-// FIXME Some of this can be a enum....
-// FIXME Is this needed?
-#[derive(Debug, Clone)]
-pub struct PopulationStatus {
-    // FIXME  What is the difference betwween SimulationStatus and PopulationStatus?
-    pub name:String, // FIXME this should be a &str and stored some place else
-    pub created:bool,
-    pub running:bool,
-    pub stopped:bool,
-    pub generation:usize,
-    pub population:usize, // Number of trees in forrest
-}
     
 #[derive(Debug, Clone)]
 pub struct PopulationAnalysis {
@@ -596,6 +600,14 @@ impl Population {
                 let config = self.simulations.get(name).unwrap().config.copy();
 
                 let num_generations = config.get_usize("num_generations").unwrap();
+
+                {
+                    let mut ps = status_lock.write().unwrap();
+                    (*ps).max_generation = num_generations;
+                    (*ps).max_population = max_population;
+                }
+                
+
                 let bnd_fname = format!("{}/Data/{}/{}",
                                         config.get_string("root_dir").expect("Config: root_dir"),
                                         config.get_string("name").expect("Config: name"),
@@ -724,7 +736,7 @@ impl Population {
             // There is a simulation record.
 
             let m_c = sr.analysis_mutex.clone();
-            // analysis_mutex is not held
+
             let status_lock = sr.status.clone();
             let forest_lock = sr.forest.clone();
             let data = sr.data.clone();
@@ -824,10 +836,12 @@ impl Population {
         
     // }
 
-    // Deprecated
-    // fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
-    //     classify(case, &self.d_all.input_names, &self.d_all.class_names, &self.forest)
-    // }
+    pub fn classify(&self, case:&Vec<f64>, name:&str) -> Option<(String, String)> {
+        let input_names = &self.simulations.get(name).unwrap().data.input_names;
+        let class_names = &self.simulations.get(name).unwrap().data.class_names;
+        let forest = &self.simulations.get(name).unwrap().forest.read().unwrap();
+        classify(case, input_names, class_names, forest)
+    }
 
     // Deprecated
     // pub fn analyse(&self) -> PopulationAnalysis {
@@ -1216,7 +1230,7 @@ impl Population {
     // }
 }
 
-#[allow(dead_code)]
+
 pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
                 class_names:&Vec<String>, forest:&Forest) ->
     Option<(String, String)> {
@@ -1335,7 +1349,7 @@ pub fn _ensure_forest(forests:&mut HashMap<String, RwLock<Forest>>,
         Some(_) => (), // Do not care
     };
 }
-#[allow(dead_code)]
+
 pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnalysis {
 
     let ref index = d_all.testing_i;
