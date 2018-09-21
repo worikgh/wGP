@@ -41,7 +41,7 @@ estimate of the classifier, Hinge Loss is:
 A classifier is assigned to a class by evaluating a `Score` for each
 class and choosing the one with the highest score.
 
-FIXME: There is no measure of differentiation.  How got a classifier
+FIXME: There is no measure of differentiation.  How good a classifier
 is at telling one class from another.
 
 When it classifies a case the ideal classifier will output 1 if the
@@ -90,7 +90,8 @@ the score for the class in descending score order.
 
    * Addition. Returns `l` plus `r`
 
-   * Arity three functions.  Apply to `Node::l` and `Node::r`, and
+
+* Arity three functions.  Apply to `Node::l` and `Node::r`, and
      `Node::d`
    
    * If. Calculate the value or 'd'.  If that is less than or equal to
