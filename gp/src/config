@@ -1,14 +1,19 @@
 birthsanddeaths_file Simple_BnD.txt
 crossover_percent 50
+copy_prob 30
 cull_size 5
 data_file Data.in
+filter 0
 generations_file Simple_Gen.txt
 num_generations 2
 id Simple
 initial_population 100
 max_population 100
 model_data_file S.txt
+mutate_prob 1
 plot_file S.png
 plot_xlab X
 r_script_file S.R
+root_dir 
+seed 2 3 8 1 209
 training_percent 80

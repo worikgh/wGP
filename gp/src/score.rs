@@ -5,21 +5,18 @@ use inputs::Inputs;
 use std::cmp::Ordering;
 //use std;
 use super::rng;
-// Scoring a individual is key to evolving a good population of
-// individuals.
+/// Scoring a individual is key to evolving a good population of
+/// individuals.
 
-// The object of a simulation, in the general non-linear
-// classification case, is to evolve a good population of classifiers.
+/// The object of a simulation, in the general non-linear
+/// classification case, is to evolve a good population of classifiers.
 
-// Each classifier is specialised for a class, the class is stored in
-// the Score struct along with a measure of quality.
+/// Each classifier is specialised for a class, the class is stored in
+/// the Score struct along with a measure of quality.
 
-// Much of the evolution process is driven by scoring.  When a
-// individual is selected for crossover or for reproduction the
-// selection is weighted by probability.
-
-
-
+/// Much of the evolution process is driven by scoring.  When a
+/// individual is selected for crossover or for reproduction the
+/// selection is weighted by probability.
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Score {

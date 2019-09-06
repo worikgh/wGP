@@ -1,3 +1,4 @@
+//! Configuration for Genetic Programme Simulations
 
 use std::path::Path;
 use std::collections::HashMap;
@@ -6,7 +7,7 @@ use std::io::BufReader;
 use std::io::prelude::*;
 //use std::env;
 
-
+#[derive(Clone)]
 pub struct Config {
     pub data:HashMap<String, String>,
 }
@@ -21,6 +22,7 @@ impl Config {
     }
     #[allow(dead_code)]
     pub fn new(cfg_file:&str)-> Config {
+        eprintln!("Config file: {} ", cfg_file);
         let file = File::open(cfg_file).unwrap();
         Config::new_file(file)
     }
@@ -38,6 +40,8 @@ impl Config {
             if let Some(k)  = iter.next() {
                 let v = iter.map(|x| format!("{} ", x)).collect::<String>();
                 if k != "#" {
+                    // Should this be testing the first charachter of
+                    // k rather than the whole string?
                     config_hm.insert(k.to_string(), v.trim().to_string());
                 }
             }
@@ -85,8 +89,15 @@ impl Config {
             _ => None,
         }
     }
+    #[allow(dead_code)]
     pub fn get_usize(&self, k:&str) -> Option<usize> {
         match self._get(k).parse::<usize>() {
+            Ok(x) => Some(x),
+            _ => None,
+        }
+    }
+    pub fn get_u32(&self, k:&str) -> Option<u32> {
+        match self._get(k).parse::<u32>() {
             Ok(x) => Some(x),
             _ => None,
         }

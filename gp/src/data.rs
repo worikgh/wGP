@@ -3,7 +3,7 @@
 // classes {1,0}.  Each line represents a record that is in one or
 // more class.
 
-// First line descripbes which columns are inputs and which are
+// First line describes which columns are inputs and which are
 // classes.  The input columns/fields are first followed by the class
 // columns/fields.  There must be at least two classes and each record
 // must be in at least one class.  Line is of form:
@@ -23,28 +23,36 @@ use super::rng;
 // Type for class definitions
 //pub type Class = f64; // {1.0,0.0}
 
-// Hold data for training or testing.
 #[derive(Debug, Clone)]
+/// Hold data for training or testing.  Data is columnated where each
+/// row is a case.  Training and testing data have two sorts of
+/// columns: input columns where each column contains the value for a
+/// particular parameter and case, and class columns where each column
+/// represents a class and the value is `1` if that case is of that
+/// class and `0` if it is not.  The cases (rows) are divided into
+/// training and testing cases using seperate indexes.
 pub struct Data {
     
-    // Names of the columns
+    /// Names of the columns that are inputs
     pub input_names:Vec<String>,
+
+    /// Names of the columns that select class
     pub class_names:Vec<String>,
 
-    // Kind of fields.  true for inputs false for classes
+    /// Kind of fields.  true for inputs false for classes
     pub kind:Vec<bool>,
 
-    // Each row of inputs.  
+    /// Each row of inputs.  
     pub data:Vec<Vec<f64>>,
 
-    // Indexes into rows for training data
+    /// Indexes into rows for training data
     pub training_i:Vec<usize>,
 
-    // Indexes into rows for testing data
+    /// Indexes into rows for testing data
     pub testing_i:Vec<usize>,
 
-    // Indexes into rows for all data
-    pub all_i:Vec<usize>,
+    // Indexes into rows for all data Deprecated
+    // pub all_i:Vec<usize>, Deprecated
 
 }
 
@@ -81,7 +89,7 @@ impl Data {
             data:Vec::<Vec<f64>>::new(),
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
-            all_i:Vec::<usize>::new(),
+            // all_i:Vec::<usize>::new(), Deprecated
         };
         ret.read_data(data_file, training_percent);
         ret
@@ -97,7 +105,7 @@ impl Data {
         self.data = Vec::<Vec<f64>>::new();
         self.testing_i = Vec::<usize>::new();
         self.training_i = Vec::<usize>::new();
-        self.all_i = Vec::<usize>::new();
+        // self.all_i = Vec::<usize>::new(); Deprecated
     }        
 
     pub fn ith_row(&self, i:usize) -> &Vec<f64> {
@@ -117,7 +125,7 @@ impl Data {
             }else{
                 self.testing_i.push(i);
             }
-            self.all_i.push(i);
+            // self.all_i.push(i); Deprecated
         }
     }        
     // Read in the data from a file

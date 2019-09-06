@@ -1,0 +1,10 @@
+copy_prob 50
+crossover_percent 50
+data_file data.in
+filter 0
+max_population 100000
+mutate_prob 1
+num_generations 40
+rescore 0
+seed 113120
+training_percent 10

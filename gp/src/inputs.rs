@@ -1,3 +1,5 @@
+/// Define the named inputs to a programme.  Each tree is a function
+/// over a set of named inputs
 use std::collections::HashMap;
 pub struct Inputs {
     dataf:HashMap<String, f64>,

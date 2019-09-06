@@ -1,21 +1,19 @@
 #[macro_use] extern crate lazy_static;
 extern crate fs2;
-extern crate ncurses;
 extern crate rand;
 extern crate statistical;
 mod config;
-mod config_default;
 mod controller;
 mod data;
-mod front_end;
 mod inputs;
 mod node;
 mod population;
 mod rng;
 mod score;
+use config::Config;
 use data::Data;
-use front_end::FrontEnd;
 use node::NodeBox;
+use population::Population;
 use score::score_individual;
 use std::env;
 use std::fs::File;
@@ -136,13 +134,13 @@ mod tests {
         assert_eq!(ns.trim(), s.to_string());        
     }
 }
+/// Manage writing data to a file.  The constructor takes a file name
+/// and creates a buffered writer to the file.  Has a "write" method
+/// that sends data to that buffer for writing to the file.  The
+/// SystemTime object is used to prefix the number of elapsed seconds
+/// to each record
 
 pub struct Recorder {
-    // Manage writing data to a file.  The constructor takes a file
-    // name and creates a buffered writer to the file.  Ha a "write"
-    // withod that sends data to that buffer for writing to the file.
-    // The SystemTime object is used to prefix the number of elapsed
-    // seconds to each record
     buffer:BufWriter<File>,
     created:SystemTime,
 }
@@ -150,6 +148,8 @@ impl Recorder {
     // FIXME This is really bad.  This writes to files with no way of
     // stopping two Recorders writing to the same file in confusing
     // ways
+
+    /// new Create a recorder that writes to the file named in the argument passed. QZRT
     fn new(file_name:&str) -> Recorder {
         Recorder{
             buffer:BufWriter::new(OpenOptions::new()
@@ -168,14 +168,22 @@ impl Recorder {
     }
 }
 
+/// Entry point. Configuration file passed on command line as only
+/// argument
+
 fn main() {
-    let  mut fe = FrontEnd::new();
 
-    let args: Vec<_> = env::args().collect();
+    // Get the configuration file and build a Config object from it
+    let args: Vec<String> = env::args().collect();
+    eprintln!("args: {:?}", args);
+    if args.len() != 2 {
+        panic!("Call with one argument only.  The configuration file");
+    }
+    let config = Config::new(args[1].as_str());
 
-    if args.len() == 1 {
-        fe.fe_start();
-    }else{
-        panic!("Deprecated code path");
-    }        
+    let mut population = Population::new(&config);
+    population.start().unwrap();
+    eprintln!("Started simulation");
+    population.join_simulation();
+    eprintln!("Simulation complete");
 }

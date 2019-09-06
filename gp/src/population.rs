@@ -1,48 +1,23 @@
-// Run simulations
+//! # Collection of Programmes.
 
-// API: new, create, delete, start, resume, stop, status,
-// analyse/read, classify, save_state, restore_state
+//! All the code to generate, evolve and utilise a population of
+//! programme trees.</br>
 
-// All APIs except new, analyse/read, status, and classify return
-// Result<bool, String>.  If the call succeeds return Ok(true) else
-// return Err(<error message>)
+//! API: new, start, classify, save_state, resume_state
 
-// new: Constructor. Pass a coonfiguration object
+//! * new Constructor. Pass a [configuration](../config/index.html) object
 
-// create: Pass a name and a Configuration object.  Set up a
-// simulation so it is ready to start.  If a simulation record of the
-// name exists that is a error.
+//! * start  Sets up and starts a simulation creating a population of trees
 
-// delete: Take a name.  If the project does not exists return
-// Ok(false).  If it exists, is not running and can be deleted, delete
-// it and return Ok(true).  Else Err(<error message>)
+//! * classify: Passed a example from the domain.  If it can be
+//! classified return Ok((String, Vec<(String, f64))) where the first
+//! string in the result is the class name that the example is
+//! classified as and the vector is all the classes and the associated
+//! probability (estimated by the population of trees) of the example
+//! being in that class
 
-// start: Passed a name.  If the simulation is created, is not running
-// and can be started start it in a thread and return Ok(true).  Else
-// Err(<error message>)
-
-// resume: Passed a name.  If a simulation is created, has been
-// started but is stopped, restart it and return Ok(true).  Else
-// Err(<error message>)
-
-// stop: Passed a name.  If the simulation is stopped return
-// Ok(false).  If the simulation is running and can be stopped stop it
-// and return Ok(true).  Else Err(<error message>)
-
-// analyse: Pass a name.  If the simulation is in a state to be
-// analysed (there is a forest evolved, there is test data available)
-// do a analysis. (??? In a thread?  FIXME in the future if this takes
-// too much time).  Return Result<PopulationAnalysis, String>,
-// Ok(<PopulationAnalysis>) or Err(<error message>)
-
-// status: Passed a name return Result<SimulationStatus, String>.  If
-// the named simulation exists return Ok(<status object>).  Else
-// Err(<error message>)
-
-// classify: Passed a name and a example from the domain if it can be
-// classified return Ok(<class name>).   Else Err(<error message>)
-
-// save_state restore_state  Save or restore the population from disc.
+//! * save_state restore_state Save or restore the population from
+//! disc. Unimplemented.
 
 
 use config::Config;
@@ -57,52 +32,47 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;    
 use std::collections::hash_map::Entry::Vacant;
 use std::fs::File;
-// use std::io::BufReader;
 use std::io::Write;
-//use std::io::prelude::*;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Instant;
 use super::Data;
 use super::Recorder;
 use super::score_individual;
 
-// Define a individual.  Consists of a node, a id, and a score.
-// Called a Tree because it is not a sub-tree... FIXME Should this be
-// in node.rs?
+/// Define a individual.  Consists of a node, a id, and a score.
 #[derive(Clone)]
 struct Tree {
+    // FIXME Should this be in node.rs?
     id:usize,
     score:Score,
     tree:NodeBox,
 } 
 
 
-//type ScoreTreeMap = BTreeMap<Score, Vec<String>>;
-
 #[derive(Clone)]
+/// A collection of [Trees](struct.Tree.html)
 pub struct Forest {
 
-    // Every simulation has one forest
-    
-    // Store trees in a Hash keyed by the string representation of the
-    // tree
+    /// Store trees in a Hash keyed by the string representation of
+    /// the tree. Indexes the HashMap with the string representation
+    /// so duplicates aerf easy to detect
     trees:HashMap<String, Tree>,
     
-    // Map score to trees so it is easy to find best and worst.  Store
-    // the string representation and beware of trees with same
-    // score...  Hence the vector
+    /// Map score to trees so it is easy to find best and worst.
+    /// Store the string representation and beware of trees with same
+    /// score...  Hence the vector
     score_trees:BTreeMap<Score, Vec<String>>,
 
-    // Each tree in the forest has a unique id.
+    /// Each tree in the forest has a unique id.  This maintains the
+    /// maximum assigned so adding another tree is a matter of
+    /// incrementing this value
     maxid:usize,
 
-    // // State for the iterator
-    // current:Option<<BTreeMap<Score, Vec<String>> as Iterator>::Item>,
 }
 
 
 impl Forest {
+    /// Initialise and return a empty Forest
     pub fn new() -> Forest {
         Forest{
             maxid:0,
@@ -111,24 +81,38 @@ impl Forest {
         }
     }
     #[allow(dead_code)]
-    fn clear(&mut self) {
+    /// Reset the Forest to empty
+    pub fn clear(&mut self) {
         self.trees.clear();
         self.score_trees.clear();
         self.maxid = 0;
     }
+
+    // Return number of trees in self.trees - number in score_trees.
+    // If the forrest is consistent then this will return 0
     fn _check_sz(&self) -> i32 {
-        // Return number of trees in self.trees - number in score_trees
         self.trees.len() as i32 - self.score_trees.iter().fold(0, |mut sum, x| {sum += x.1.len(); sum})  as i32
     }
+
+    /// Overwrite this Forrest with another one 
     fn replace(&mut self, forest:&Forest) {
         self.trees = forest.trees.clone();
         self.score_trees = forest.score_trees.clone();
         self.maxid = forest.maxid;
     }
     
+    /// Insert a Tree into the Forrest
+
+    /// # Panics
+
+    /// If the tree is already in the forrest this will panic.
+    /// Duplicate trees are not allowed.
     fn insert(&mut self, str_rep:&str, tree:Tree) {
         // Check for duplicates
         match self.trees.get(str_rep){
+            Some(_) => {
+                panic!("Inserting a duplicate tree");
+            },
             None => {
                 self.trees.insert(str_rep.to_string(), tree.clone());
                 let v = self.score_trees.entry(tree.score).or_insert(Vec::new());
@@ -139,23 +123,26 @@ impl Forest {
                     self.maxid = tree.id;
                 }
             },
-            Some(_) => {
-                panic!("Inserting a duplicate tree");
-            },
         };
         assert!(self._check_sz() == 0);
     }
+
+    // Check if a Tree is in this Forrest by string
     fn has_tree_str(&self, t:&str) -> bool {
         self.trees.contains_key(t)
     }
+
+    // Check if a Tree is in this Forrest using the NodeBox
     fn has_tree_nb(&self, t:&NodeBox) -> bool {
         self.has_tree_str(t.to_string().as_str())
     }
 
+    /// Delete a tree using the string rep.  Returns the ID of the
+    /// tree deleted
     fn delete_str(&mut self, str_rep:&str) -> usize{
-
-        // Delete a tree using the string rep
-        
+        // FIXME If passed a invalid string (either nonsense of a
+        // string representation of a tree not in the forest) this
+        // will panic
         let tree = self.trees.remove(&str_rep.to_string()).unwrap();
         let ret = tree.id;
         
@@ -181,36 +168,10 @@ impl Forest {
         
         ret
     }
-    #[allow(dead_code)]
-    fn delete(&mut self, tree:&Tree, str_rep:Option<&str>) -> usize{
-        // Delete a tree.  For callers that have a string
-        // representation of the tree already pass it in in Some(..),
-        // others pass None in second argument
-
-        // Return id of tree deleted
-        let str_rep = match str_rep {
-            Some(s) => s.to_string(),
-            None => tree.tree.to_string(),
-        };
-        let ret = self.trees.remove(&str_rep).unwrap().id;
-
-        // Get the vector holding the string representation of the
-        // tree and delete it
-        let v:Vec<String>;
-        {
-            let _v = self.score_trees.get(&tree.score).unwrap();
-            v = _v.iter().filter(|s| **s == str_rep).map(|x| x.to_string()).collect();
-        }
-        if v.len() != 0 {
-            self.score_trees.insert(tree.score.clone(), v);
-        }else{
-            // If that is the last tree with this score
-            self.score_trees.remove(&tree.score).unwrap();
-        }
-        ret
-    }
     
     #[allow(dead_code)]
+    /// Make a deep copy of the Forest.  FIXME Should thi be `clone`?
+    /// Yes.
     fn copy(&self) -> Forest {
         Forest {
             maxid:self.maxid,
@@ -222,577 +183,172 @@ impl Forest {
         }
     }
     #[allow(dead_code)]
+    /// How many trees are in the forest?
     fn count(&self) -> usize {
         self.trees.len()
     }
 }
 
-
-pub struct SimulationRecord {
-    // The record that stores all that a simulation needs.  The
-    // SimulationStatus (FIXME Change tht name as it s used to pass
-    // commands to simulation as well), and the Forest are kept in
-    // Arc<..> guards so they can be passed between threads.  The name
-    // is not stored in this record, itis stored as the key in the
-    // HashMap that stores this record.
-    status:Arc<RwLock<SimulationStatus>>,
-    forest:Arc<RwLock<Forest>>,
-    handle:Option<thread::JoinHandle<()>>,
-    config:Config,
-    data:Data, // pub for FrontEnd
-
-    // Hold this when doing a simulation to stop two simultaneous
-    // analyses
-    analysis_mutex:Arc<Mutex<()>>, 
-}
-
-impl SimulationRecord {
-    fn new(config:&Config) -> SimulationRecord {
-        let data_path = format!("{}/Data/{}/{}", config.get_string("root_dir").expect("Config: root_dir"),
-                                config.get_string("name").expect("Config: name"),
-                                config.get_string("data_file").expect("Config: data_file"));
-        let data = Data::new(&data_path, config.get_usize("training_percent").expect("Config: training_percent"));
-        
-        SimulationRecord {
-            status:Arc::new(RwLock::new(SimulationStatus::new(false))),
-            forest:Arc::new(RwLock::new(Forest::new())),
-            handle:None,
-            config:config.copy(),
-            data:data, 
-            analysis_mutex:Arc::new(Mutex::<()>::new(())),
-        }
-    }
-
-    // The front end needs to know how many inputs to provide
-    pub fn get_num_fields(&self) -> usize {
-        self.data.input_names.len()
-    }
-}
+/// The collection of trees representing programmes and the genetic
+/// algorithms to work on them
 pub struct Population {
 
     // There is one Population
     
-    // Maps the name of a simulation to data about it including the forest
-    pub simulations:HashMap<String, SimulationRecord>,
-
-    // Configuration that applies to all simulations
-    pop_config:PopulationConfig,
-
+    pub handle:Option<thread::JoinHandle<()>>,
+    forest:Arc<RwLock<Forest>>,
+    config:Config,
+    data:Data,
 }
 
-// The configuration data for a Population.
-#[derive(Clone)]
-struct PopulationConfig {
-
-    // For random number generator to make simulations repeatable
-    seed:Vec<u32>,
-    num_generations:usize,
-    
-    crossover_percent:usize,
-    mutate_prob:usize,
-    copy_prob:usize,
-
-    max_population:usize,
-
-    // If non 0 pick best 'filter' rules in restore trees
-    filter:usize, 
-
-    // If set then then reclassify trees with score_individual in
-    // restore_trees
-    rescore:bool, 
-    
-}
-
-impl PopulationConfig {
-    fn new(config:&Config) -> PopulationConfig {
-
-        // Collect errors to report to user, all at once.  This is so
-        // a user does not have to fix one error, re-run, fix the
-        // next...
-        let mut err = "".to_string();
-        let seed:Vec<u32>;
-        if let Some(s) =  config.get_string("seed") {
-            seed = s.split_whitespace().map(|x| match x.parse::<u32>() {
-                Ok(n) => n,
-                Err(e) => {
-                    err.push_str(format!("Could not parse seed: {}\n", e).as_str());
-                    0 // Must return a valid u32 from this branch
-                },
-            }).collect();
-        }else{
-            seed = vec![0];
-            err.push_str("Could not find seed\n");
-        }
-        let num_generations:usize;
-        if let Some(n) = config.get_usize("num_generations") {
-            num_generations = n;
-        }else{
-            num_generations = 0;
-            err.push_str("Could not find num_generations\n");
-        }
-        let crossover_percent:usize;
-        if let Some(n) = config.get_usize("crossover_percent") {
-            crossover_percent = n;
-        }else{
-            crossover_percent = 0;
-            err.push_str("Could not find crossover_percent\n");
-        }
-        let mutate_prob:usize;
-        if let Some(n) = config.get_usize("mutate_prob") {
-            mutate_prob = n;
-        }else{
-            mutate_prob = 0;
-            err.push_str("Could not find mutate_prob\n");
-        }
-        let copy_prob:usize;
-        if let Some(n) = config.get_usize("copy_prob") {
-            copy_prob = n;
-        }else{
-            copy_prob = 0;
-            err.push_str("Could not find copy_prob\n");
-        }
-        let max_population:usize;
-        if let Some(n) = config.get_usize("max_population") {
-            max_population = n;
-        }else{
-            max_population = 0;
-            err.push_str("Could not find max_population\n");
-        }
-        // let birthsanddeaths_file:String;
-        // if let Some(n) = config.get_string("birthsanddeaths_filename") {
-        //     birthsanddeaths_file = n;
-        // }else{
-        //     birthsanddeaths_file = "".to_string();
-        //     err.push_str("Could not find birthsanddeaths_file\n");
-        // }
-        // let generations_file:String;
-        // if let Some(n) = config.get_string("generations_file") {
-        //     generations_file = n;
-        // }else{
-        //     generations_file = "".to_string();
-        //     err.push_str("Could not find generations_file\n");
-        // }
-        // let save_file:String;
-        // if let Some(n) = config.get_string("save_file") {
-        //     save_file = n;
-        // }else{
-        //     save_file = "".to_string();
-        //     err.push_str("Could not find save_file\n");
-        // }
-
-        let filter:usize;
-        if let Some(n) = config.get_usize("filter") {
-            filter = n;
-        }else{
-            filter = 0;
-            err.push_str("Could not find filter\n");
-        }
-        let rescore = match config.get_usize("filter") {
-            Some(r) => match r {
-                0 => false,
-                _ => true,
-            },
-            None => false, // default
-        };
-        if err.len() != 0 {
-            // If anything went wrong report it and fail
-            panic!(err);
-        }
-        PopulationConfig {
-            copy_prob,
-            crossover_percent,
-            filter,
-            max_population,
-            mutate_prob,
-            num_generations,
-            rescore,
-            seed,
-        }
-    }
-}
-#[derive(Clone, Debug)]
-pub struct SimulationStatus {
-
-    // FIXME These two variables can be one, surely?
-    pub cleared:bool, // Front end unsets this to stop simulation gently
-    pub running:bool, // Simulation re/sets this as it starts/stops
-
-    // Current generation and upper limit
-    pub generation:usize, 
-
-
-    pub start:Instant, // When started
-    pub analysis:Option<PopulationAnalysis>, 
-
-    // Number of trees in forest
-    pub population:usize,
-
-    pub max_generation:usize, 
-    pub max_population:usize,
-    
-}
-
-impl SimulationStatus {
-    pub fn new(cleared:bool) -> SimulationStatus{
-        SimulationStatus{
-            start:Instant::now(),
-            cleared:cleared,
-            running:false,
-            generation:0,
-            max_generation:0,
-            population:0,
-            max_population:0,
-            analysis:None,
-        }
-    }
-    #[allow(dead_code)]
-    pub fn copy(&self) -> SimulationStatus{
-        SimulationStatus{
-            start:self.start,
-            cleared:self.cleared,
-            running:self.running,
-            generation:self.generation,
-            max_generation:self.generation,
-            population:self.population,
-            max_population:self.population,
-            analysis:self.analysis.clone(),
-        }
-    }
-}
-
-// #[derive(Debug, Clone)]
-    
-#[derive(Debug, Clone)]
-pub struct PopulationAnalysis {
-    // Stores a analysis of the population
-
-    // Over all count of miss-classifications
-    pub incorrect:usize,    
-
-    // Over all count of correct classifications
-    pub correct:usize,    
-
-    // Number classified (Total 
-    pub classified:usize,
-
-    // Total number of cases tested
-    pub cases:usize,
-    
-    // The names of classes are owned by the Data object owned by the
-    // Population object
-
-    // False positives by class
-    pub false_positives:HashMap<String, usize>,
-
-    // False negatives by class
-    pub false_negatives:HashMap<String, usize>,
-
-    // Count examples of a class to normalise the other parameters
-    pub counts:HashMap<String, usize>,
-
-    // Generation that this analysis as done
-    pub generation:usize,
-
-}    
-impl PopulationAnalysis {
-    #[allow(dead_code)]
-    fn new(classes:&Vec<String>) -> PopulationAnalysis {
-        let mut ret =  PopulationAnalysis {
-            incorrect:0,
-            correct:0,  
-            false_positives:HashMap::new(), 
-            false_negatives:HashMap::new(),
-            counts:HashMap::new(),
-            classified:0,
-            cases:0,
-            generation:0,
-        };
-        for c in classes.iter() {
-            ret.counts.insert(c.clone(), 0);
-            ret.false_positives.insert(c.clone(), 0);
-            ret.false_negatives.insert(c.clone(), 0);
-        }
-        ret
-    }
-}
 impl Population {
-
 
     //==============================
     //
     // API Implementation
     //
 
+    /// Initialise a population
     pub fn new(config:&Config) ->  Population {
-
+        
+        // Get the data.  FIXME Document some (other) place where the
+        // data files reside and how they are found
+        let data_path = format!("{}/Data/{}/{}",
+                                config.get_string("root_dir").expect("Config: root_dir"),
+                                config.get_string("name").expect("Config: name"),
+                                config.get_string("data_file").expect("Config: data_file"));
+        let data = Data::new(&data_path, config.get_usize("training_percent").expect("Config: training_percent"));
         
         Population {
-            pop_config:PopulationConfig::new(&config),
-            simulations:HashMap::new(),
+            forest:Arc::new(RwLock::new(Forest::new())),
+            handle:None,
+            data:data, 
+            config:config.clone(),
         }
     }
 
-    pub fn create(&mut self, name:&str, config:&Config) -> Result<bool, String> {
+    pub fn start(&mut self) -> Result<bool, String> {
+        
+        // Get all the variables the simulation will need
+        let forest_lock = self.forest.clone();
+        let data = self.data.clone();
 
-        // Set up a simulation ready to start
+        // FIXME Make these probabilities f64s instead of
+        // 'percentages' in [0..100]!!
+        let mutate_prob = self.config.get_usize("mutate_prob").unwrap(); 
+        let copy_prob = self.config.get_usize("copy_prob").unwrap();
+        let crossover_percent = self.config.get_usize("crossover_percent").unwrap();
 
-        // First check if a simulation already exists
-        if self.simulations.contains_key(name) {
-            return Err(format!("Simulation exists: {} ", name));
-        }
+        let max_population = self.config.get_usize("max_population").unwrap();
+        // The random number generator I use has its seed as a vector
+        // of usize.  Why?  Just use one number...
+        let seed:Vec<u32> = vec![self.config.get_u32("seed").unwrap()];
+        let num_generations = self.config.get_usize("num_generations").unwrap();
+        let bnd_fname = format!("{}/Data/{}/{}",
+                                self.config.get_string("root_dir").expect("Config: root_dir"),
+                                self.config.get_string("name").expect("Config: name"),
+                                self.config.get_string("birthsanddeaths_filename").expect("Config: birthsanddeaths_filename"));
+        let mut bnd_rec = Recorder::new(bnd_fname.as_str());
+        let  generations_file = format!("{}/Data/{}/{}",
+                                        self.config.get_string("root_dir").expect("Config: root_dir"),
+                                        self.config.get_string("name").expect("Config: name"),
+                                        self.config.get_string("generations_file").unwrap());
+        let mut generation_recorder = Recorder::new(&generations_file[..]);
+        let save_file = format!("{}/Data/{}/{}",
+                                self.config.get_string("root_dir").expect("Config: root_dir"),
+                                self.config.get_string("name").expect("Config: name"),
+                                self.config.get_string("save_file").unwrap());
 
-        // FIXME Check the configuration file here, rather than have
-        // it fail when a simulation starts.
-        // root_dir must exist and be a directory
-        // root_dir/data_file must exist and be a readable file
-        // training_percent must exist as a usize
+        // Write the header for the generation file
+        let s = "generation, best_id, Best Score, Individual".to_string();
+        generation_recorder.write_line(&s[..]);
+        generation_recorder.buffer.flush().unwrap();
 
-        self.simulations.insert(name.to_string(), SimulationRecord::new(config));
+        // Start the thread
+        let handle = thread::spawn( move || {
+            // The source of entropy.  
+            rng::reseed(seed.as_slice());
+
+            let mut generation = 0;
+
+            // Initialise a random population
+            {
+                // Block for accessing forest with a mutex FIXME: Get
+                // rid of the lock and do not check length of tree
+                if (*forest_lock.read().unwrap()).trees.len() == 0 {
+                    _initialise_rand(&mut forest_lock.write().unwrap(),
+                                     &data,
+                                     &mut bnd_rec, max_population);
+                }else{
+                    eprintln!("population Not calling _initialise_rand");
+                }
+            }
+
+            loop {
+                
+                generation = generation + 1;
+
+                // If we have done as many generations as we
+                // plan to, quit
+                if generation > num_generations {
+                    break;
+                }
+                // FIXME Are there other criterion for ending a
+                // simulation?
+                
+                // Advance simulation by generating a new forest
+                let forest:Forest;
+
+                forest = _new_generation(&forest_lock.read().unwrap(),
+                                         mutate_prob, copy_prob,
+                                         crossover_percent,
+                                         max_population,
+                                         &data,
+                                         &mut bnd_rec,
+                                         save_file.as_str());
+
+                // FIXME Get rid of lock
+                forest_lock.write().unwrap().replace(&forest);
+
+                // Write a report of this old generation
+
+                // Get the trees that have the best score
+                let best:&Vec<String> =
+                    forest.score_trees.iter().last().unwrap().1;
+                for tree_s in best {
+                    // Get the tree for class and id
+                    let tree = forest.trees.get(tree_s.as_str()).unwrap();
+                    let id = tree.id;
+                    let score = tree.score.quality;
+                    let s = format!("{}, {}, {}, {}",
+                                    generation,
+                                    id,
+                                    score,
+                                    tree.tree.to_string());
+                    generation_recorder.write_line(&s[..]);
+                    
+                }
+                generation_recorder.buffer.flush().unwrap(); 
+            }
+
+        });
+
+        // Thread started
+        self.handle = Some(handle);
         Ok(true)
+    }
+
+
+    /// Wait for a simulation to finish
+    pub fn join_simulation(&mut self) {
         
-    }
-
-    #[allow(dead_code)]
-    pub fn delete(&mut self, name:&str) -> Result<bool, String> {
-        if self.simulations.contains_key(name) {
-            if self.simulations.get(name).unwrap().status.read().unwrap().running {
-                Err(format!("Simulation {} cannot be deleted.  It is running", name))
-            }else{
-                self.simulations.remove(name).expect(format!("Simulation named {} is not in map", name).as_str());
-                Ok(true)
-            }
-        }else{
-            Ok(false)
+        match self.handle.take() {
+            Some(s) => s.join().expect("Could not join simulation thread"),
+            None => panic!("No handle"),
         }
     }
+    
 
-    pub fn start(&mut self, name:&str) -> Result<bool, String> {
-        // start: Passed a name.  If the simulation is created, is not
-        // running and can be started start it in a thread and return
-        // Ok(true).  Else Err(<error message>)
-
-        if !self.simulations.contains_key(name) {
-            return Err(format!("Simulation named: {} is not created", name));
-        }
-
-        match self.simulations.get(name).unwrap().handle {
-            Some(_) =>  Err(format!("Simulation named: {} is created and started", name)),
-            None => {
-                if self.simulations.get(name).unwrap().status.read().unwrap().running {
-                    // FIXME This is a contradiction.  Perhaps panic! here?
-                    return Err(format!("Simulation named: {} is created and running", name));
-                }
-
-                // There is no thread handle already present and cleared to run
-                
-                // Get all the variables the simulation will need
-                let mutate_prob = self.pop_config.mutate_prob;
-                let copy_prob = self.pop_config.copy_prob;
-                let crossover_percent = self.pop_config.crossover_percent; 
-                let max_population = self.pop_config.max_population;
-                let seed:Vec<u32> = self.pop_config.seed.clone();
-
-                // Write the header for the generaion file
-                let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-                let status_lock = self.simulations.get(name).unwrap().status.clone();
-                let forest_lock = self.simulations.get(name).unwrap().forest.clone();
-                let data = self.simulations.get(name).unwrap().data.clone();
-                let config = self.simulations.get(name).unwrap().config.copy();
-
-                let num_generations = config.get_usize("num_generations").unwrap();
-
-                {
-                    let mut ps = status_lock.write().unwrap();
-                    (*ps).max_generation = num_generations;
-                    (*ps).max_population = max_population;
-                }
-                
-
-                let bnd_fname = format!("{}/Data/{}/{}",
-                                        config.get_string("root_dir").expect("Config: root_dir"),
-                                        config.get_string("name").expect("Config: name"),
-                                        config.get_string("birthsanddeaths_filename").expect("Config: birthsanddeaths_filename"));
-
-                let mut bnd_rec = Recorder::new(bnd_fname.as_str());
-                let save_file = config.get_string("save_file").unwrap().clone();
-                let  generations_file = format!("{}/Data/{}/{}",
-                                                config.get_string("root_dir").expect("Config: root_dir"),
-                                                config.get_string("name").expect("Config: name"),
-                                                config.get_string("generations_file").unwrap().clone());
-                let mut generation_recorder = Recorder::new(&generations_file[..]);
-                generation_recorder.write_line(&s[..]);
-                generation_recorder.buffer.flush().unwrap();
-
-                // Start the thread
-                let handle = thread::spawn( move || {
-                    // The source of entropy.  
-                    rng::reseed(seed.as_slice());
-
-
-                    {
-                        // Update status.  We are running
-                        let mut ps = status_lock.write().unwrap();
-                        (*ps).running = true;
-                    }
-                    let mut generation = 0;
-
-                    // If the forrest has no trees initialise it
-                    // Initialise a random population
-                    {
-                        // Block for accessing forest with a mutex
-                        if (*forest_lock.read().unwrap()).trees.len() == 0 {
-                            _initialise_rand(&mut forest_lock.write().unwrap(),
-                                             &data, &mut bnd_rec, max_population);
-                        }else{
-                            eprintln!("623 population Not calling _initialise_rand");
-                        }
-                    }
-
-                    loop {
-                        // Check if the process has been stopped
-                        generation = generation + 1;
-
-                        // If we have done as many generations as we
-                        // plan to, quit
-                        if generation > num_generations {
-                            break;
-                        }
-                        
-                        {
-                            {
-                                let mut ps = status_lock.write().unwrap();
-                                ps.generation = generation;
-                                if !ps.running  {
-                                    break; // FIXME This is where `cleared` was used
-                                }
-                            }
-                        }
-
-                        // Advance simulation by generating a new forest
-                        let forest:Forest;
-
-                        forest = _new_generation(&forest_lock.read().unwrap(),
-                                                 mutate_prob, copy_prob,
-                                                 crossover_percent,
-                                                 max_population,
-                                                 &data,
-                                                 &mut bnd_rec,
-                                                 save_file.as_str());
-
-                        forest_lock.write().unwrap().replace(&forest);
-                    }
-
-                    // Loop finished.  Reset the running flag
-                    let mut ps = status_lock.write().unwrap();
-                    ps.running  = false;
-                });
-
-                // Thread started
-                self.simulations.get_mut(name).unwrap().handle = Some(handle);
-                Ok(true)
-            },
-        }
-    }
-
-    pub fn status(&self, name:&str) -> Result<SimulationStatus, String> {
-        match self.simulations.get(name) {
-            None =>  Err(format!("Project {} has not been started", name)),
-            Some(simulation_record) => {
-                let ss = simulation_record.status.read().unwrap().clone();
-                Ok(ss)
-            }
-        }
-    }
-
-    fn _analyse_thread(status_lock:Arc<RwLock<SimulationStatus>>,
-                       forest_lock:Arc<RwLock<Forest>>,
-                       data:Data, lock:Arc<Mutex<()>>)  -> thread::JoinHandle<()> {
-        thread::spawn( move || { // FIXME What are implications not keeping handle
-            match lock.try_lock() {
-                Ok(_) => {
-            
-                    let generation = status_lock.read().unwrap().generation;
-                    let pa = analyse(&forest_lock.read().unwrap(), &data, generation);
-                    status_lock.write().unwrap().analysis = Some(pa.clone());
-
-                },
-                Err(err) => eprintln!("Could not get lock {}", err),
-            };
-            // The Arc is released here
-        })                
-    }
-    pub fn analyse(&mut self, name:&str) {
-        // analyse: Pass a name.  If the simulation is in a state to
-        // be analysed (there is a forest evolved, there is test data
-        // available) do a analysis. (??? In a thread?  FIXME in the
-        // future if this takes too much time).  Return
-        // Result<PopulationAnalysis, String>,
-        // Ok(<PopulationAnalysis>) or Err(<error message>).  Store
-        // the result, if there is one, in
-        // self.simulations[name].analyse
-
-
-        if let Some(sr) = self.simulations.get(name) {
-            // There is a simulation record.
-
-            let m_c = sr.analysis_mutex.clone();
-
-            let status_lock = sr.status.clone();
-            let forest_lock = sr.forest.clone();
-            let data = sr.data.clone();
-
-            Population::_analyse_thread(status_lock, forest_lock, data, m_c);
-
-        }else{
-            eprintln!("723 Population::analyse: Project {} is not created", name.clone());
-        }
-    }
-
-
-    //     // FIXME Details about directory structure of simulations is
-    //     // hard coded here, there and everywhere
-    //     let data_file = format!("{}/Data/{}/{}",
-    //                             config.get_string("root_dir").expect("No root_dir in config"),
-    //                             config.get_string("name").expect("No name in config"),
-    //                             config.get_string("data_file").expect("No data_file in config"));
-
-    //     if !Path::new(data_file.as_str()).exists() {
-    //         panic!("Data file: {} does not exist", data_file);
-    //     }
-    //     let training_percent = config.get_usize("training_percent").unwrap();
-    //     let d_all = Data::new(&data_file, training_percent);
-
-
-    //     // Write the header for the generaion file
-    //     let s = format!("generation, best_id, Best Score General, Best Score Special, Population, Best");
-    //     let  generations_file = pop_config.generations_file.clone();
-    //     let mut generation_recorder = Recorder::new(&generations_file[..]);
-    //     generation_recorder.write_line(&s[..]);
-    //     generation_recorder.buffer.flush().unwrap();
-
-    //     Population{
-    //         d_all,
-    //         pop_config,
-    //         name,
-    //     }
-        
-    // }
-
-
-    // pub fn initialise_rand(&mut self){
-    //     // Initialise with a random tree
-    //     let mut bnd_rec = Recorder::new(self.pop_config.birthsanddeaths_file.as_str());
-    //     loop {
-
-    //         // Random individual.  'add_individual' returns true when
-    //         // a unique individual is created.
-    //         while !self.add_individual(&mut bnd_rec) {} 
-
-    //         if self.len() == self.pop_config.max_population {
-    //             break;
-    //         }
-    //     }
-    // }        
 
     #[allow(dead_code)]
     pub fn restore(&mut self){
@@ -836,19 +392,14 @@ impl Population {
         
     // }
 
-    pub fn classify(&self, case:&Vec<f64>, name:&str) -> Option<(String, String)> {
-        let input_names = &self.simulations.get(name).unwrap().data.input_names;
-        let class_names = &self.simulations.get(name).unwrap().data.class_names;
-        let forest = &self.simulations.get(name).unwrap().forest.read().unwrap();
+    #[allow(dead_code)]
+    pub fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
+        let input_names = &self.data.input_names;
+        let class_names = &self.data.class_names;
+        let forest = &self.forest.read().unwrap();
         classify(case, input_names, class_names, forest)
     }
 
-    // Deprecated
-    // pub fn analyse(&self) -> PopulationAnalysis {
-    //     analyse(&self.forest, &self.d_all)
-    // }
-
-        
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
         for (_, v) in forest.trees.iter() {
@@ -1211,7 +762,7 @@ impl Population {
     }
 
 
-    fn _save_trees(forest:&Forest, save_file:&str){
+fn _save_trees(forest:&Forest, save_file:&str){
         
         let mut state = String::new();
         for (s, t) in forest.trees.iter() {
@@ -1223,14 +774,9 @@ impl Population {
         file.lock_exclusive().expect("Failed to lock save file");
 
     }
-    
-    // pub fn save_trees(&self){
-    //     Population::_save_trees(&*self.controller.forests.get(&self.name).unwrap().read().unwrap(), self.pop_config.save_file.as_str())
-        
-    // }
 }
 
-
+#[allow(dead_code)]
 pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
                 class_names:&Vec<String>, forest:&Forest) ->
     Option<(String, String)> {
@@ -1336,71 +882,6 @@ pub fn classify(case:&Vec<f64>, input_names:&Vec<String>,
         }
     }
 
-pub fn _ensure_forest(forests:&mut HashMap<String, RwLock<Forest>>,
-                  name:&str) {
-    // Ensure there is a forest
-    match forests.get(name) {
-        None => {
-            // No forest yet for this project
-            let forest = Forest::new();
-            let lock = RwLock::<Forest>::new(forest);
-            forests.insert(name.to_string(), lock);
-        },
-        Some(_) => (), // Do not care
-    };
-}
-
-pub fn analyse(forest:&Forest, d_all:&Data, generation:usize) -> PopulationAnalysis {
-
-    let ref index = d_all.testing_i;
-    
-
-    // Build a object that describes the quality of the
-    // classifiers, as a set, over the test data
-    let mut pa = PopulationAnalysis::new(&d_all.class_names);
-    pa.generation = generation;
-
-    // Initialise counts 
-    for x in d_all.class_names.iter() {
-        pa.counts.insert(x.to_string(), 0);
-    }
-    
-    // Over the testing data clasify each record and compare with true
-    // class
-    
-    for i in index {
-        pa.cases = pa.cases + 1;
-        let ref r = d_all.data[*i];
-        if let Some((s, _)) = classify(r, &d_all.input_names, &d_all.class_names, forest){ 
-            // s is estimated class. 
-            pa.classified = pa.classified + 1;
-            // The actual class
-            let c = d_all.get_class(*i);
-
-            // Record how many instances of this class are seen
-            let _c = *pa.counts.get(c).unwrap();
-            let pa_class = c.to_string();
-            pa.counts.insert(pa_class.clone(), _c + 1);
-            
-            // Check if estimated class is correct.
-            if s != c {
-                pa.incorrect = pa.incorrect + 1;
-                let fp = *pa.false_positives.get_mut(s.as_str()).unwrap();
-                let nn = *pa.false_negatives.get_mut(c).unwrap();
-                pa.false_positives.
-                    insert(pa_class.clone(), fp + 1).
-                    unwrap();
-                pa.false_negatives.
-                    insert(pa_class, nn + 1).
-                    unwrap();
-            }else{
-                pa.correct = pa.correct + 1;
-            }
-        }//老虎
-    }
-    pa
-}
-
 
 pub fn _initialise_rand(forest:&mut Forest, d_all:&Data, bnd_rec:&mut Recorder, max_population:usize){
     // Initialise with a random tree
@@ -1451,7 +932,7 @@ fn _new_generation(forest:&Forest,
             let id = new_forest.maxid+1;
             new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
             new_forest.maxid = id;
-            bnd_rec.write_line(&format!("Cross: {} + {} --> {}/(Sc:{}): {}",
+            bnd_rec.write_line(&format!("Cross {} + {} --> {}/(Sc:{}): {}",
                                         l, r, id, &sc.quality, st));
         }
         nc += 1;
@@ -1482,7 +963,7 @@ fn _new_generation(forest:&Forest,
                 new_forest.maxid += 1;
                 let id = new_forest.maxid;
                 new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
-                bnd_rec.write_line(format!("Mutate: {} --> {}: {}/(Sc: {})",
+                bnd_rec.write_line(format!("Mutate {} --> {}: {}/(Sc: {})",
                                            id0, new_forest.maxid, st, &sc.quality).as_str());
             }                
         }

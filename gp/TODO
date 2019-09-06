@@ -3,7 +3,7 @@ TESTS
 Visualisation of:
 
     Results.  How good classifier is
-    Crossover: Ho resources are allocated inside loop
+    Crossover: No resources are allocated inside loop
     Trees: graphviz
 
 Wrapper to write config file and to start simulation

@@ -1,9 +1,11 @@
-
-// The basic unit of aAST
+// The basic unit of a AST
 pub type NodeBox = Box<Node>;
 use std::fmt;
+use std::usize;
+use std::f64;
+//use std::f32;
 use rng;
-use std;
+//use rand::distributions::{Distribution, Uniform};
 //use super::Operator;
 use inputs::Inputs;
 
@@ -12,6 +14,10 @@ use inputs::Inputs;
 enum TerminalType {
     Float(f64),
     // Custom terminals for inputs
+
+    // Input from the outside world comes as strings.  Always (at time
+    // of writing) a f64. The string names the input field that
+    // contains the value
     Inputf64(String),
 }
 
@@ -36,7 +42,11 @@ enum Operator {
     Add,  
     Log,  
     Multiply,
-    Invert, // ??! Invert 0.0?
+
+    // ??! Invert 0.0?  If a individual tries to use `invert` on 0.0
+    // it will die... FIXME Is that right? 
+    Invert,
+    
     Negate,
     If,
     Gt, // >
@@ -44,7 +54,26 @@ enum Operator {
     Remainder, // %
     Terminal(TerminalType),
 }
+fn _rand_f64() -> f64 {
+    // Return a float that is -inf and +inf biased to numbers around 0
+    let x = rng::gen_range(0.0, 1.0) as f64;
+    let base = 2.0; // This is the shape of the distribution
+    let scale = 10.0; // Scales results
 
+    // With base == 2.0 and scale == 10.0 for 42,248 samples got the data described as (R):
+    // Min.   :-131.53423  
+    // 1st Qu.: -10.13796  
+    // Median :  -0.03012  
+    // Mean   :  -0.02720  
+    // 3rd Qu.:  10.19232  
+    // Max.   : 207.13013  
+    
+    if x < 0.5 {
+        (2.0_f64*x).log(base)*scale
+    }else{
+        -1.0_f64*(2.0_f64*(-1.0_f64*(x-0.5_f64)+0.5_f64)).log(base) * scale
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Node {
     // Operator and a left and right child trees, or None.  
@@ -108,17 +137,12 @@ impl Node {
     pub fn new(names:&Vec<String>, level:usize) -> Node {
         let l = level+1;
 
-        // FIXME Make this max levela configurable constant
-        let maxlevel = 10;
-        let a = if level > maxlevel { 
-            0
-        }else{
-            //  This controlls ho many input nodes there are
-            //  (probabilistically).  FIXME Make it configurable
-            rng::gen_range(0, 18)
-        };
-
         macro_rules! NewNode {
+            // Create a Node (in a Box).  The first argument is the
+            // name of the node operator the second is 1,2, or 3 that
+            // sets the number of children.  (FIXME The number of
+            // children depends on the operator so $c depends on
+            // $name)
             ($name:ident, $c:expr) => {
                 {
                     let mut ret = Node{o:Operator::$name,
@@ -139,8 +163,22 @@ impl Node {
                 }
             }
         };
+
+        // FIXME Make this max level a configurable constant
+        let maxlevel = 10;
+        let a = if level > maxlevel { 
+            0
+        }else{
+            //  This controlls how many input nodes there are
+            //  (probabilistically). For a <= 9 ithe node will be a
+            //  internal function (there are ten internal node types:
+            //  0 => constant to 9 => if.  FIXME Make nmax
+            //  configurable
+            let nmax = 18;
+            rng::gen_range(0, nmax)
+        };
         match a {
-            0 => Node{o:Operator::Terminal(TerminalType::Float(rng::random())), l:None, r:None, d:None},
+            0 => Node{o:Operator::Terminal(TerminalType::Float(_rand_f64())), l:None, r:None, d:None},
             1 => NewNode!(Log,1),
             2 => NewNode!(Invert,1),
             3 => NewNode!(Negate,1),
@@ -159,8 +197,10 @@ impl Node {
             }
         }
     }
+
+    /// Recursive count of child nodes
     pub fn count_nodes(&self) -> usize {
-        // Recursive count of child nodes
+        
         let dc = match self.d {
             Some(ref n) => n.count_nodes(),
             None => 0,
@@ -175,13 +215,20 @@ impl Node {
         };
         dc + lc + rc + 1
     }
+
+    /// Select a random node from the tree
     pub fn random_node(&self) -> NodeBox {
         // Choose a subtree (node) of this tree (node).  FIXME there
         // is a lot of optimisation to be done.  Paticularly if each
         // node had the number of nodes that are child nodes of this...
+
+        // Select the node by first counting all nodes in the tree
+        // then randomly selecting a number < the total
         let c = self.count_nodes();
         let mut n = rng::gen_range(0, c);
-        let mut node:& Node = self;
+        
+        // At the end of the loop `node` will be the selected Node.
+        let mut node:& Node = self; 
         loop {
 
             // Loop invariant n >= 0 Exit when a node with no left or
@@ -189,12 +236,17 @@ impl Node {
             if n == 0 {
                 break;
             }
+
+            // Check for children
             let fl = match node.l{Some(_) => false, None => true};
             let fr = match node.r{Some(_) => false, None => true};
             if fl && fr {
                 // No children (if there is a 'd' child there must be
                 // 'l'and 'r') or n is one so we have arrived at the
                 // node selected by the e.gen_range statement above
+
+                // FIXME n cannot be zero.  The comment above talks of
+                // n == 1.  Why?
                 if n != 0 {
                     panic!("Node: {} n {}", self.to_string(), n);
                 }
@@ -203,7 +255,7 @@ impl Node {
 
             // Children in decision node
             let dc = match node.d {
-                Some(ref q) => (*q).count_nodes(),
+                Some(ref d) => (*d).count_nodes(),
                 None => 0,
             };
 
@@ -218,10 +270,12 @@ impl Node {
                     
                     continue // FIXME is this needed?
                 }else{
+                    // There is no decision node.  This code should
+                    // never be reached.
                     panic!("dc {} n {} operator {:?} ",
                            dc, n, self.to_string());
                 }
-            }
+            } // dc >= n
 
             // Is node in left subtree?
             let lc = match node.l {
@@ -241,11 +295,12 @@ impl Node {
                     
                     continue // FIXME is this needed?
                 }else{
+                    // There is no left sub-tree.  This code should
+                    // never be reached.
                     panic!("lc {} n {} operator {:?} ",
                            lc, n, self.to_string())
                 }
             }else{
-
 
                 // Get node from right subtree
                 if let Some(ref nd) = node.r {
@@ -257,6 +312,8 @@ impl Node {
 
                     continue // FIXME is this needed?
                 }else{
+                    // There is no right sub tree.  This code should
+                    // never be reached.
                     panic!("n {} operator {:?} ",
                            n, self.to_string())
                 }
@@ -264,8 +321,9 @@ impl Node {
         }
         NodeBox::new(*node.copy())
     }
+
+    /// A recursive copy of a Node
     pub fn copy(&self) -> NodeBox {
-        // Recursive copy
         let ret = Node{
             // FIXME Why not: o:self.o,
             o:match self.o {
@@ -298,6 +356,8 @@ impl Node {
         };
         NodeBox::new(ret)
     }
+
+    /// A string representation of a Node
     #[allow(dead_code)]
     pub fn to_string(&self) -> String {
         let mut ret = "".to_string();
@@ -447,6 +507,8 @@ impl Node {
         ret
     }
 
+    /// Recursively evaluate a tree over a set of inputs.  This is
+    /// where operators are defined.
     pub fn evaluate(&self, inputs:&Inputs)->Option<f64> {
         macro_rules! evaluate {
             ($a:ident) => {
