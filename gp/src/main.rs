@@ -183,7 +183,5 @@ fn main() {
 
     let mut population = Population::new(&config);
     population.start().unwrap();
-    eprintln!("Started simulation");
-    population.join_simulation();
-    eprintln!("Simulation complete");
+    eprintln!("Simulation complete\n{}", population.report());
 }

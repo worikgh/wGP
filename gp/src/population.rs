@@ -16,6 +16,8 @@
 //! probability (estimated by the population of trees) of the example
 //! being in that class
 
+//! * report: Display the best classifiers for each class.
+
 //! * save_state restore_state Save or restore the population from
 //! disc. Unimplemented.
 
@@ -33,7 +35,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use std::fs::File;
 use std::io::Write;
-use std::sync::{Arc, RwLock};
+//use std::sync::{Arc, RwLock};
 use std::thread;
 use super::Data;
 use super::Recorder;
@@ -70,7 +72,6 @@ pub struct Forest {
 
 }
 
-
 impl Forest {
     /// Initialise and return a empty Forest
     pub fn new() -> Forest {
@@ -95,11 +96,11 @@ impl Forest {
     }
 
     /// Overwrite this Forrest with another one 
-    fn replace(&mut self, forest:&Forest) {
-        self.trees = forest.trees.clone();
-        self.score_trees = forest.score_trees.clone();
-        self.maxid = forest.maxid;
-    }
+    // fn replace(&mut self, forest:&Forest) {
+    //     self.trees = forest.trees.clone();
+    //     self.score_trees = forest.score_trees.clone();
+    //     self.maxid = forest.maxid;
+    // }
     
     /// Insert a Tree into the Forrest
 
@@ -196,7 +197,7 @@ pub struct Population {
     // There is one Population
     
     pub handle:Option<thread::JoinHandle<()>>,
-    forest:Arc<RwLock<Forest>>,
+    forest:Forest,
     config:Config,
     data:Data,
 }
@@ -220,7 +221,7 @@ impl Population {
         let data = Data::new(&data_path, config.get_usize("training_percent").expect("Config: training_percent"));
         
         Population {
-            forest:Arc::new(RwLock::new(Forest::new())),
+            forest:Forest::new(),
             handle:None,
             data:data, 
             config:config.clone(),
@@ -230,7 +231,7 @@ impl Population {
     pub fn start(&mut self) -> Result<bool, String> {
         
         // Get all the variables the simulation will need
-        let forest_lock = self.forest.clone();
+        //let forest_lock = self.forest.clone();
         let data = self.data.clone();
 
         // FIXME Make these probabilities f64s instead of
@@ -265,91 +266,60 @@ impl Population {
         generation_recorder.buffer.flush().unwrap();
 
         // Start the thread
-        let handle = thread::spawn( move || {
-            // The source of entropy.  
-            rng::reseed(seed.as_slice());
 
-            let mut generation = 0;
+        rng::reseed(seed.as_slice());
 
-            // Initialise a random population
-            {
-                // Block for accessing forest with a mutex FIXME: Get
-                // rid of the lock and do not check length of tree
-                if (*forest_lock.read().unwrap()).trees.len() == 0 {
-                    _initialise_rand(&mut forest_lock.write().unwrap(),
-                                     &data,
-                                     &mut bnd_rec, max_population);
-                }else{
-                    eprintln!("population Not calling _initialise_rand");
-                }
+        let mut generation = 0;
+
+        // Initialise a random population
+        {
+            // Block for accessing forest with a mutex FIXME: Get
+            // rid of the lock and do not check length of tree
+            if self.forest.trees.len() == 0 {
+                _initialise_rand(&mut self.forest,
+                                 &data,
+                                 &mut bnd_rec, max_population);
+            }else{
+                eprintln!("population Not calling _initialise_rand");
             }
+        }
 
-            loop {
-                
-                generation = generation + 1;
+        loop {
+            
+            generation = generation + 1;
 
-                // If we have done as many generations as we
-                // plan to, quit
-                if generation > num_generations {
-                    break;
-                }
-                // FIXME Are there other criterion for ending a
-                // simulation?
-                
-                // Advance simulation by generating a new forest
-                let forest:Forest;
-
-                forest = _new_generation(&forest_lock.read().unwrap(),
-                                         mutate_prob, copy_prob,
-                                         crossover_percent,
-                                         max_population,
-                                         &data,
-                                         &mut bnd_rec,
-                                         save_file.as_str());
-
-                // FIXME Get rid of lock
-                forest_lock.write().unwrap().replace(&forest);
-
-                // Write a report of this old generation
-
-                // Get the trees that have the best score
-                let best:&Vec<String> =
-                    forest.score_trees.iter().last().unwrap().1;
-                for tree_s in best {
-                    // Get the tree for class and id
-                    let tree = forest.trees.get(tree_s.as_str()).unwrap();
-                    let id = tree.id;
-                    let score = tree.score.quality;
-                    let s = format!("{}, {}, {}, {}",
-                                    generation,
-                                    id,
-                                    score,
-                                    tree.tree.to_string());
-                    generation_recorder.write_line(&s[..]);
-                    
-                }
-                generation_recorder.buffer.flush().unwrap(); 
+            // If we have done as many generations as we
+            // plan to, quit
+            if generation > num_generations {
+                break;
             }
+            // FIXME Are there other criterion for ending a
+            // simulation?
+            
+            // Advance simulation by generating a new forest
+            self.forest = _new_generation(&self.forest,
+                                          mutate_prob, copy_prob,
+                                          crossover_percent,
+                                          max_population,
+                                          &data,
+                                          &mut bnd_rec,
+                                          save_file.as_str());
 
-        });
+            // Write a report of this old generation
+            // Not saying much yet....
 
-        // Thread started
-        self.handle = Some(handle);
+            let s = format!("{}",// {}, {}, {}",
+                            generation,
+                            // id,
+                            // score,
+                            // tree.tree.to_string()
+            );
+            generation_recorder.write_line(&s[..]);
+            generation_recorder.buffer.flush().unwrap(); 
+        }
+
         Ok(true)
     }
-
-
-    /// Wait for a simulation to finish
-    pub fn join_simulation(&mut self) {
-        
-        match self.handle.take() {
-            Some(s) => s.join().expect("Could not join simulation thread"),
-            None => panic!("No handle"),
-        }
-    }
-    
-
-
     #[allow(dead_code)]
     pub fn restore(&mut self){
         // FIXME This could have a file name argument so Population
@@ -396,9 +366,51 @@ impl Population {
     pub fn classify(&self, case:&Vec<f64>) -> Option<(String, String)> {
         let input_names = &self.data.input_names;
         let class_names = &self.data.class_names;
-        let forest = &self.forest.read().unwrap();
-        classify(case, input_names, class_names, forest)
+        classify(case, input_names, class_names, &self.forest)
     }
+
+    /// For each class report the best classifier that has the best
+    /// score.  In case of ties report all classifiers that have the
+    /// best score.
+    pub fn report(&self) -> String {
+
+        // Map class names to 2-tupple (Best score for that class,  string representations of
+        // classifiers)
+        let mut class_score:HashMap<String, (f64, Vec<String>)> = HashMap::new();
+
+        for (score, trees) in &self.forest.score_trees {
+            let class = &score.class;
+
+            // Ensure class_score has a record for this class
+            if !class_score.contains_key(class.as_str()) {
+                class_score.insert(class.clone(), (0.0, Vec::new()));
+            }
+
+            let q = score.evaluate();
+            if class_score.get(class).unwrap().0 < q {
+                // For this class there are better trees
+                class_score.insert(class.clone(), (q, trees.clone()));
+            }else if class_score.get(class).unwrap().0 <= q {
+                // These are trees that are equal in quality to those
+                // in class_score.  Do not replace the trees, add to
+                // them
+                for v in trees {
+                    class_score.get_mut(class.as_str()).unwrap().1.push(v.clone());
+                }
+            }
+        }
+        
+        let mut ret = String::new();
+        for (c, (q, vt)) in class_score {
+            for v in vt {
+                ret =ret +  format!("{} {} {}\n",
+                                    c, q, v.to_string()).as_str();
+                
+            }
+        }
+        ret
+    }
+
 
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
@@ -539,8 +551,17 @@ impl Population {
         // Return the id of a individual selected using roulette wheel
         // selection:
         // FIXME Return a reference to a tree not a id
+        // FIXME What part should class play in selection?
 
-        let total_score:f64 = forest.score_trees.iter().fold(0.0, | a, (ref b, ref v)| b.evaluate() * v.len() as f64 + a);
+        
+        let total_score:f64 =
+            forest.score_trees.iter().
+            fold(0.0,
+                 //  `a` is the accululator and (b,v) is element from
+                 //  score_trees. `b` is a `Score` and v a vector of
+                 //  individuals. This fold returns total score over
+                 //  all individuals
+                 | a, (ref b, ref v)| b.evaluate() * v.len() as f64 + a);
 
         if total_score == 0.0 {
             // Return a random key
@@ -557,7 +578,7 @@ impl Population {
                     acc += s.evaluate();
                     if acc > sel {
                         // Have the tree's string rep in t.  Get the
-                        // actual tree's id
+                        // actual tree's id.  
                         ret = Some(forest.trees.get(t).unwrap().id);
                         break 'lable;
                     }
@@ -638,6 +659,9 @@ impl Population {
 
     fn _do_crossover(forest:&Forest)  -> (NodeBox, usize, usize){
         let i0 = Population::roulette_selection(forest);
+        // FIXME Here is a possible place to take account of class.
+        // Could apply some sort of "class prejudice" as a probability
+        // that i1 will not be accepted if it is of a different class
         let i1 = Population::roulette_selection(forest);
         (Population::_crossover(forest, i0, i1), i0, i1)
     }
@@ -1004,7 +1028,6 @@ fn _new_generation(forest:&Forest,
     // let mut n2 = 0; // Number of individuals added
     while new_forest.trees.len() > max_population {
         Population::_delete_worst(&mut new_forest, bnd_rec);
-        //n1 += 1;
     }
     let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
     while new_forest.trees.len() < max_population {
