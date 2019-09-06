@@ -1,0 +1,6 @@
+a <- runif(1000, -1, 1)
+b <- runif(1000, -1, 1)
+data <- cbind(a,b,a<b)
+colnames(data) <- c("A", "B", "<")
+data <- rbind(c(1,1,0), data)
+write.csv(row.names=FALSE,data, "data.in")
