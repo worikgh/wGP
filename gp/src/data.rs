@@ -16,8 +16,9 @@
 // Data starts from third line and continues to end of file.
 
 use File;
-use std::io::Read;
-use BufReader;
+//use std::io::Read;
+use std::io::BufReader;
+use std::io::BufRead;
 use super::rng;
 //use score::classify_node;
 // Type for class definitions
@@ -81,7 +82,7 @@ impl Data {
         ret.unwrap()
     }
 
-    pub fn new(data_file:&String, training_percent:usize) -> Data {
+    pub fn new(data_file:&str, training_percent:usize) -> Data {
         let mut ret = Data{
             input_names:Vec::<String>::new(),
             class_names:Vec::<String>::new(),
@@ -91,7 +92,7 @@ impl Data {
             training_i:Vec::<usize>::new(),
             // all_i:Vec::<usize>::new(), Deprecated
         };
-        ret.read_data(data_file, training_percent);
+        ret.read_data(data_file, training_percent).unwrap();
         ret
     }
 
@@ -128,42 +129,32 @@ impl Data {
             // self.all_i.push(i); Deprecated
         }
     }        
-    // Read in the data from a file
+
+    /// Read in the data from a file
     fn read_data(&mut self, f_name:&str,
-                 training_percent:usize) {
+                 training_percent:usize)  -> std::io::Result<()>{
 
         // Must be in file f_name.  First row is a header with names.
         // Second is a row that indicates which columns are inputs and
         // which identify classes
         self.reset();
-        let file = File::open(f_name).expect(format!("Could not open file: {}", f_name).as_str());
+        let file = File::open(f_name)?;
         let mut buf_reader = BufReader::new(file);
-        let mut contents = String::new();
-        buf_reader.read_to_string(&mut contents).unwrap();
-        let mut lines = contents.lines();
 
         // Get first line, allocate names 
-        let h = lines.nth(0);
-        let l_names = match h {
-            Some(l) =>   {
-                l
-            },
-            None => panic!(""),
-
-        };
+        let mut l_names:String = String::new();
+        buf_reader.read_line(&mut l_names)?;
 
         // Get second line for column types
-        let h = lines.nth(0);
-        let l_indicate = match h {
-            Some(l) =>   {
-                l
-            },
-            None => panic!(""),
-        };
+        let mut l_indicate:String = String::new();
+        buf_reader.read_line(&mut l_indicate)?;
 
         // FIXME Why over two lines?
         let h_ind1:Vec<&str> = l_indicate.split(',').collect();
-        let h_ind:Vec<usize> = h_ind1.iter().map(|x| {x.parse::<usize>().unwrap()}).collect();
+        let h_ind:Vec<usize> = h_ind1.iter().map(|x| {
+            eprintln!("Here is digit: '{}'", x.trim_end());
+            x.trim_end().parse::<usize>().unwrap()
+        }).collect();
         // let h_ind = h_ind2.map(|x| x.parse::<usize>().unwrap()).collect();
 
         let h_names:Vec<&str> = l_names.split(',').collect();
@@ -207,17 +198,19 @@ impl Data {
 
         // Loop over the data storing it in the rows
         loop {
-            
-            let line = match lines.next() {
-                Some(l) => l,
-                None => break,
+            let mut line:String = String::new();
+            match buf_reader.read_line(&mut line)? {
+                0 => break, // EOF
+                _ => {
+                    let d:Vec<&str> = line.split(',').collect();
+                    let d:Vec<f64> = d.iter().map(|x| {
+                        x.trim_end().parse::<f64>().unwrap()
+                    }).collect();
+                    self.add_data_row(d);
+                },
             };
-            let d:Vec<&str> = line.split(',').collect();
-            let d:Vec<f64> = d.iter().map(|x| {x.parse::<f64>().unwrap()}).collect();
-
-            self.add_data_row(d);
-            
         }
         self.partition(training_percent);
+        Ok(())
     }
 }

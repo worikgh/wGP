@@ -18,37 +18,31 @@ use score::score_individual;
 use std::env;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::BufReader;
+//use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
-
+use inputs::Inputs;
+use node::Node;
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    /// Test the partitioning of data
     fn test_data_partition() {
-        let config = Config::new("config");
+        let config = Config::new("TestConfig");
         let data_file = config.get_string("data_file").unwrap();
         
-        // Load the data
-        let mut d_all:Data = Data::new();
-        d_all.read_data(data_file.as_str(), 0);
-        assert_eq!(d_all.training_i.len(), 0);
-
-        d_all.read_data(data_file.as_str(), 100);
-        assert_eq!(d_all.testing_i.len(), 0);
-
-        d_all.read_data(data_file.as_str(), 50);
-        assert_ne!(d_all.testing_i.len(), 0);
-        assert_ne!(d_all.training_i.len(), 0);
-
-        d_all.read_data(data_file.as_str(), 10);
-        assert!(d_all.training_i.len()< d_all.testing_i.len(), 0);
-
-        d_all.read_data(data_file.as_str(), 90);
-        assert!(d_all.training_i.len() > d_all.testing_i.len(), 0);
-
+        {
+            // Load the data with zero training
+            let d_all:Data = Data::new(data_file.as_str(), 0);
+            assert_eq!(d_all.training_i.len(), 0);
+        }
+        {
+            // Load the data with zero testing
+            let d_all:Data = Data::new(data_file.as_str(), 100);
+            assert_eq!(d_all.testing_i.len(), 0);
+        }
     }
     #[test]
     fn test_node_eval(){

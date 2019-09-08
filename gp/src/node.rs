@@ -362,7 +362,7 @@ impl Node {
     pub fn to_string(&self) -> String {
         let mut ret = "".to_string();
 
-        // Macro to cmake the child of a node into a string
+        // Macro to make the child of a node into a string
         macro_rules! child_to_string {
             ($name:ident) => {
                 match self.$name {

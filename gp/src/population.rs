@@ -786,17 +786,17 @@ impl Population {
     }
 
 
-fn _save_trees(forest:&Forest, save_file:&str){
+    fn _save_trees(forest:&Forest, save_file:&str){
         
         let mut state = String::new();
         for (s, t) in forest.trees.iter() {
-            state += &format!("Class{}Score{}Node{}\n", t.score.class, t.score.quality,s);
+            state += &format!("Class: {} Score: {} Node: {}\n", t.score.class, t.score.quality,s);
         }
 
-        // FIXME This is not in correst directory
-        let file = File::create(save_file).unwrap();
+        // FIXME This is not in correct directory
+        let mut file = File::create(save_file).unwrap();
         file.lock_exclusive().expect("Failed to lock save file");
-
+        file.write_all(state.as_bytes()).unwrap();
     }
 }
 
