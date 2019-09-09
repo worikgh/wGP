@@ -124,9 +124,6 @@ pub fn score_individual(
 
     let mut inputs = Inputs::new();
 
-    // FIXME To enable differentiation here store each Score for each
-    // class and store the difference between the Score::quality for
-    // the best and the second best
     for  class in d.class_names.iter() {
 
         // Store each distance from the estimate to the actual value
@@ -161,9 +158,6 @@ pub fn score_individual(
             // Get the estimate
             let e = node.evaluate(&inputs).unwrap();
             
-
-            // Score: See ExperimentalResults.tex for explanation of
-            // the loss function
             let l = loss_function(t, e);
             y_d.push(l);
         }
