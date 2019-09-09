@@ -514,7 +514,7 @@ impl Node {
             ($a:ident) => {
                 match self.$a {
                     Some(ref $a) => {
-                        let n = &(*$a); // Node
+                        let n = &(*$a); // Node.  FIXME  Comment this &(*$a)
                         let f = n.evaluate(inputs); // Option<f64>
                         let l = f.unwrap();
                         l
@@ -530,7 +530,7 @@ impl Node {
             Operator::If => {
                 let def = evaluate!(d);
                 let e:f64;
-                if def >= 0.0 {
+                if def > 0.0 {
                     e = evaluate!(l);
                 }else{
                     e = evaluate!(r);
