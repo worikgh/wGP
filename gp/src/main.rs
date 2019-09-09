@@ -22,11 +22,11 @@ use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::time::SystemTime;
-use inputs::Inputs;
-use node::Node;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inputs::Inputs;
+    use node::Node;
     #[test]
     /// Test the partitioning of data
     fn test_data_partition() {
@@ -45,6 +45,7 @@ mod tests {
         }
     }
     #[test]
+    /// Test the evaluation of a node
     fn test_node_eval(){
         let mut inputs = Inputs::new();
         let s = "Multiply Float 0.06 Negate Diameter";
@@ -116,15 +117,19 @@ mod tests {
         let t = n.evaluate(&inputs).unwrap();
         assert_eq!(t, -9.0);        
 
+        let s = "And Gt Remainder x y -0.1 Lt Remainder x y 0.1";
+        let n = Node::new_from_string(s);
+        let mut inputs = Inputs::new();
+        inputs.insert("x", 92.0);
+        inputs.insert("y", 3.0);
+        let t = n.evaluate(&inputs).unwrap();
+        assert_eq!(t, 1.0);        
     }
     #[test]
     fn test_node_from_string(){
         let s = "Add Add Add Invert Height Diameter Add Negate Float 0.03049337449511591 Add Multiply Negate Invert Float 0.40090461861005733 Negate Diameter Negate Float 0.06321754406175395 Length";
         let n = Node::new_from_string(s);
         let ns = &n.to_string()[..];
-        println!("");
-        println!("1: {}", s);
-        println!("2: {}", ns.trim());
         assert_eq!(ns.trim(), s.to_string());        
     }
 }
