@@ -33,6 +33,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;    
 use std::collections::HashMap;    
 use std::collections::hash_map::Entry::Vacant;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::fs::File;
 use std::io::Write;
 //use std::sync::{Arc, RwLock};
@@ -81,7 +83,7 @@ impl Forest {
             score_trees:BTreeMap::new(),
         }
     }
-    #[allow(dead_code)]
+
     /// Reset the Forest to empty
     pub fn clear(&mut self) {
         self.trees.clear();
@@ -108,8 +110,10 @@ impl Forest {
 
     /// If the tree is already in the forrest this will panic.
     /// Duplicate trees are not allowed.
-    fn insert(&mut self, str_rep:&str, tree:Tree) {
+    fn insert(&mut self, tree:Tree) {
         // Check for duplicates
+        let string_rep = tree.tree.to_string();
+        let str_rep:&str = string_rep.as_str();
         match self.trees.get(str_rep){
             Some(_) => {
                 panic!("Inserting a duplicate tree");
@@ -232,7 +236,7 @@ impl Population {
         
         // Get all the variables the simulation will need
         //let forest_lock = self.forest.clone();
-        let data = self.data.clone();
+        // let data = self.data.clone();
 
         // FIXME Make these probabilities f64s instead of
         // 'percentages' in [0..100]!!
@@ -245,39 +249,33 @@ impl Population {
         // of usize.  Why?  Just use one number...
         let seed:Vec<u32> = vec![self.config.get_u32("seed").unwrap()];
         let num_generations = self.config.get_usize("num_generations").unwrap();
-        let bnd_fname = format!("{}/Data/{}/{}",
-                                self.config.get_string("root_dir").expect("Config: root_dir"),
-                                self.config.get_string("name").expect("Config: name"),
-                                self.config.get_string("birthsanddeaths_filename").expect("Config: birthsanddeaths_filename"));
+        let bnd_fname = self._bnd_file_name();
         let mut bnd_rec = Recorder::new(bnd_fname.as_str());
         let  generations_file = format!("{}/Data/{}/{}",
                                         self.config.get_string("root_dir").expect("Config: root_dir"),
                                         self.config.get_string("name").expect("Config: name"),
                                         self.config.get_string("generations_file").unwrap());
         let mut generation_recorder = Recorder::new(&generations_file[..]);
-        let save_file = format!("{}/Data/{}/{}",
-                                self.config.get_string("root_dir").expect("Config: root_dir"),
-                                self.config.get_string("name").expect("Config: name"),
-                                self.config.get_string("save_file").unwrap());
-
+        let save_file = self._save_file_name();
+        
         // Write the header for the generation file
         let s = "generation, best_id, Best Score, Individual".to_string();
         generation_recorder.write_line(&s[..]);
         generation_recorder.buffer.flush().unwrap();
 
-        // Start the thread
-
         rng::reseed(seed.as_slice());
 
         let mut generation = 0;
 
-        // Initialise a random population
-        {
-            // Block for accessing forest with a mutex FIXME: Get
-            // rid of the lock and do not check length of tree
+        if self.config.get_string("reload") == "true" {
+            // Restore state from the last run
+            self.restore_state();
+        }else{
+            // Initialise a random population
+
             if self.forest.trees.len() == 0 {
                 _initialise_rand(&mut self.forest,
-                                 &data,
+                                 &self.data,
                                  &mut bnd_rec, max_population);
             }else{
                 eprintln!("population Not calling _initialise_rand");
@@ -301,7 +299,7 @@ impl Population {
                                           mutate_prob, copy_prob,
                                           crossover_percent,
                                           max_population,
-                                          &data,
+                                          &self.data,
                                           &mut bnd_rec,
                                           save_file.as_str());
 
@@ -320,7 +318,7 @@ impl Population {
 
         Ok(true)
     }
-    #[allow(dead_code)]
+
     pub fn restore(&mut self){
         // FIXME This could have a file name argument so Population
         // does not need to know
@@ -411,6 +409,65 @@ impl Population {
         ret
     }
 
+    fn _save_file_name(&self) -> String {
+        format!("{}/Data/{}/{}",
+                self.config.get_string("root_dir").expect("Config: root_dir"),
+                self.config.get_string("name").expect("Config: name"),
+                self.config.get_string("save_file").unwrap())
+    }
+    fn _bnd_file_name(&self) -> String {
+        format!("{}/Data/{}/{}",
+                self.config.get_string("root_dir").expect("Config: root_dir"),
+                self.config.get_string("name").expect("Config: name"),
+                self.config.get_string("birthsanddeaths_filename").unwrap())
+    }
+
+    ///  save_state.  Save the forrest to a file defined in the
+    ///  configuration file
+    fn save_state(&self) {
+        let file_name = self._save_file_name();
+        Population::_save_trees(&self.forest, file_name.as_str());
+    }
+
+    /// Restore state from a save file
+    fn restore_state(&mut self) -> std::io::Result<()>{
+        let file_name = self._save_file_name();
+        let file = File::open(file_name)?;
+        let mut buf_reader = BufReader::new(file);
+
+        self.forest.clear();
+
+        // Need to record each individual that is recreated.
+        let bnd_fname = self._bnd_file_name();
+        let mut bnd = Recorder::new(bnd_fname.as_str());
+        
+        // Get first line, allocate names 
+        let mut line:String = String::new();
+        while buf_reader.read_line(&mut line)? != 0 {
+            let  split = line.as_str().split(" ");
+            let v:Vec<&str> = split.collect();
+            let mut f = false; // Set this when we get to node
+            let mut tree = String::new();
+            for w in v {
+                if f {
+                    tree = tree + " " + w;
+                }
+                if w == "Node:" {
+                    f = true;
+                }
+            }
+            // tree is string representation of a tree
+            let n = Box::new(Node::new_from_string(tree.as_str()));
+            let sc = score_individual(&n, &self.data, true);
+            let id = self.forest.maxid + 1;
+            {
+                bnd.write_line(&format!("Recreate {}/(Sc: {}) {}", id, sc.quality, n.to_string()));
+            }
+            self.forest.insert(Tree{id:id, score:sc, tree:n});
+            self.forest.maxid = id;
+        }
+        Ok(())
+    }
 
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
@@ -463,9 +520,9 @@ impl Population {
 
         let mut ret = Forest::new();
         ret.maxid = forest.maxid;
-        for (k, v) in forest.trees.iter() {
+        for (_, v) in forest.trees.iter() {
             if v.score.is_finite() {
-                ret.insert(k, v.clone());
+                ret.insert(v.clone());
             }else{
                 bnd_rec.write_line(
                     &format!("RIP {} culled", v.id)
@@ -557,7 +614,7 @@ impl Population {
         let total_score:f64 =
             forest.score_trees.iter().
             fold(0.0,
-                 //  `a` is the accululator and (b,v) is element from
+                 //  `a` is the accumulator and (b,v) is element from
                  //  score_trees. `b` is a `Score` and v a vector of
                  //  individuals. This fold returns total score over
                  //  all individuals
@@ -617,7 +674,7 @@ impl Population {
             {
                 bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.quality, n.to_string()));
             }
-            forest.insert(&st, Tree{id:id, score:sc, tree:n});
+            forest.insert(Tree{id:id, score:sc, tree:n});
             forest.maxid = id;
             true
         }else{
@@ -661,7 +718,7 @@ impl Population {
         let i0 = Population::roulette_selection(forest);
         // FIXME Here is a possible place to take account of class.
         // Could apply some sort of "class prejudice" as a probability
-        // that i1 will not be accepted if it is of a different class
+        // that `i1` will not be accepted if it is of a different class
         let i1 = Population::roulette_selection(forest);
         (Population::_crossover(forest, i0, i1), i0, i1)
     }
@@ -954,7 +1011,7 @@ fn _new_generation(forest:&Forest,
             // A unique child in next generation
             let sc = score_individual(&nb, d_all, true);
             let id = new_forest.maxid+1;
-            new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+            new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
             new_forest.maxid = id;
             bnd_rec.write_line(&format!("Cross {} + {} --> {}/(Sc:{}): {}",
                                         l, r, id, &sc.quality, st));
@@ -986,7 +1043,7 @@ fn _new_generation(forest:&Forest,
                 let sc = score_individual(&nb, d_all, true);
                 new_forest.maxid += 1;
                 let id = new_forest.maxid;
-                new_forest.insert(&st, Tree{id:id, score:sc.clone(), tree:nb});
+                new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
                 bnd_rec.write_line(format!("Mutate {} --> {}: {}/(Sc: {})",
                                            id0, new_forest.maxid, st, &sc.quality).as_str());
             }                
@@ -1006,7 +1063,7 @@ fn _new_generation(forest:&Forest,
 
                 // Unique in the new population
                 let t = forest.trees.get(st).unwrap();
-                new_forest.insert(st, t.clone());
+                new_forest.insert(t.clone());
                 cp += 1;
                 if cp == ncp  {
                     break;
