@@ -152,7 +152,6 @@ impl Data {
         // FIXME Why over two lines?
         let h_ind1:Vec<&str> = l_indicate.split(',').collect();
         let h_ind:Vec<usize> = h_ind1.iter().map(|x| {
-            eprintln!("Here is digit: '{}'", x.trim_end());
             x.trim_end().parse::<usize>().unwrap()
         }).collect();
         // let h_ind = h_ind2.map(|x| x.parse::<usize>().unwrap()).collect();
