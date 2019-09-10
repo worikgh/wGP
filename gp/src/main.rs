@@ -117,13 +117,41 @@ mod tests {
         let t = n.evaluate(&inputs).unwrap();
         assert_eq!(t, -9.0);        
 
-        let s = "And Gt Remainder x y -0.1 Lt Remainder x y 0.1";
+        let s = "Add Gt Remainder x y Float -0.1 Lt Remainder x y Float 0.1";
         let n = Node::new_from_string(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 92.0);
         inputs.insert("y", 3.0);
         let t = n.evaluate(&inputs).unwrap();
-        assert_eq!(t, 1.0);        
+        eprintln!("Result: {}", t);
+        assert_eq!(t, 0.0);        
+    }
+    #[test]
+    fn test_evaluation_remainder(){
+        let d = Data {
+            names:vec!["Q".to_string(), "Obj".to_string()],
+            input_names:vec!["Q".to_string()],
+            data:vec![vec![8116.0,1.0],vec![9122.0,2.0], vec![4407.0,0.0]],
+            training_i:vec![0,1],
+            testing_i:vec![2],
+        };
+        {
+            let s = "Remainder Q Float 3.0";
+            let _n = Box::new(Node::new_from_string(s));
+            match score_individual(&_n, &d, false) {
+                Ok(ss) => assert_eq!(ss.quality(), 0.0),
+                Err(e) => panic!("{:?}", e),
+            };
+
+        }
+        {
+            let s = "Remainder Q Float 3.1";
+            let _n = Box::new(Node::new_from_string(s));
+            match score_individual(&_n, &d, false) {
+                Ok(ss) => assert_ne!(ss.quality(), 0.0),
+                Err(e) => panic!("{:?}", e),
+            };
+        }
     }
     #[test]
     fn test_node_from_string(){
