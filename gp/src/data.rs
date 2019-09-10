@@ -1,28 +1,16 @@
 // Data inputs.  Text files with commer seperated values a record per
-// line and the same number of fields per record.  Inputs are f64 and
-// classes {1,0}.  Each line represents a record that is in one or
-// more class.
+// line and the same number of fields per record.  All but the last
+// column arer inputs.  Teh last column is the true value of the
+// function.  Inputs are all f64
 
-// First line describes which columns are inputs and which are
-// classes.  The input columns/fields are first followed by the class
-// columns/fields.  There must be at least two classes and each record
-// must be in at least one class.  Line is of form:
+// First line describes names the  columns
 
-// 1, 1, 1, 0, 0 where three inputs are data for classifying into two
-// classes
-
-// The second line is the names of the fields.
-
-// Data starts from third line and continues to end of file.
+// Data starts from second line and continues to end of file.
 
 use File;
-//use std::io::Read;
 use std::io::BufReader;
 use std::io::BufRead;
 use super::rng;
-//use score::classify_node;
-// Type for class definitions
-//pub type Class = f64; // {1.0,0.0}
 
 #[derive(Debug, Clone)]
 /// Hold data for training or testing.  Data is columnated where each
@@ -35,14 +23,13 @@ use super::rng;
 pub struct Data {
     
     /// Names of the columns that are inputs
+    pub names:Vec<String>,
+
+    // Reference into names for the columns that are inputs (all but
+    // last column)
+    // pub input_names:Vec<&'a str>,
     pub input_names:Vec<String>,
-
-    /// Names of the columns that select class
-    pub class_names:Vec<String>,
-
-    /// Kind of fields.  true for inputs false for classes
-    pub kind:Vec<bool>,
-
+    
     /// Each row of inputs.  
     pub data:Vec<Vec<f64>>,
 
@@ -52,61 +39,29 @@ pub struct Data {
     /// Indexes into rows for testing data
     pub testing_i:Vec<usize>,
 
-    // Indexes into rows for all data Deprecated
-    // pub all_i:Vec<usize>, Deprecated
-
 }
 
 impl Data {
-    pub fn class_idx(&self, class:&str) -> usize {
-        // Return the index of the class name in self.data
-        self.input_names.len() +
-            match self.class_names.iter().position(|ref x| *x == class) {
-                Some(i) => i,
-                None => panic!("Class {} is unknown", class)
-            }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_class(&self, i:usize) -> &str {
-        let row = &self.data[i];
-        let mut ret:Option<&String> = None;
-        let start =  self.input_names.len();
-        let end = start + self.class_names.len();
-        for j in start..end {
-            if row[j] == 1.0 {
-                ret = Some(&self.class_names[j-start]);
-                break;
-            }
-        }
-        ret.unwrap()
-    }
-
     pub fn new(data_file:&str, training_percent:usize) -> Data {
         let mut ret = Data{
+            names:Vec::<String>::new(),
+            //input_names:Vec::<&'a str>::new(),
             input_names:Vec::<String>::new(),
-            class_names:Vec::<String>::new(),
-            kind:Vec::new(),
             data:Vec::<Vec<f64>>::new(),
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
-            // all_i:Vec::<usize>::new(), Deprecated
         };
         ret.read_data(data_file, training_percent).unwrap();
         ret
     }
 
-    // pub fn copy(&self) -> Data {
-    //     let mut ret = Data::new(self.data_file, self.training_percent);
-        
-    // }
     fn reset(&mut self){
+        self.names = Vec::<String>::new();
+        // self.input_names = Vec::<&'a str>::new();
         self.input_names = Vec::<String>::new();
-        self.class_names = Vec::<String>::new();
         self.data = Vec::<Vec<f64>>::new();
         self.testing_i = Vec::<usize>::new();
         self.training_i = Vec::<usize>::new();
-        // self.all_i = Vec::<usize>::new(); Deprecated
     }        
 
     pub fn ith_row(&self, i:usize) -> &Vec<f64> {
@@ -126,7 +81,6 @@ impl Data {
             }else{
                 self.testing_i.push(i);
             }
-            // self.all_i.push(i); Deprecated
         }
     }        
 
@@ -135,8 +89,6 @@ impl Data {
                  training_percent:usize)  -> std::io::Result<()>{
 
         // Must be in file f_name.  First row is a header with names.
-        // Second is a row that indicates which columns are inputs and
-        // which identify classes
         self.reset();
         let file = File::open(f_name)?;
         let mut buf_reader = BufReader::new(file);
@@ -145,56 +97,21 @@ impl Data {
         let mut l_names:String = String::new();
         buf_reader.read_line(&mut l_names)?;
 
-        // Get second line for column types
-        let mut l_indicate:String = String::new();
-        buf_reader.read_line(&mut l_indicate)?;
-
-        // FIXME Why over two lines?
-        let h_ind1:Vec<&str> = l_indicate.split(',').collect();
-        let h_ind:Vec<usize> = h_ind1.iter().map(|x| {
-            x.trim_end().parse::<usize>().unwrap()
-        }).collect();
-        // let h_ind = h_ind2.map(|x| x.parse::<usize>().unwrap()).collect();
-
         let h_names:Vec<&str> = l_names.split(',').collect();
-        // assert_eq!(h_ind.len(), h_names.len());
 
-        // Set to false after processed all input columns.  Means the
-        // case where all inputs, then all classes is violated can be
-        // detected.  "You Will Respect My Authoritah!"
-        let mut flag = true; 
 
         for i in 0..h_names.len() {
 
             // Get the name of input/class
             let s = h_names.iter().nth(i).unwrap();
-            
-            let f = *h_ind.iter().nth(i).unwrap();
-            if f == 1 {
-                // This is input
-                
-                if !flag {
-                    panic!("At column {} see a input!  Already seen a class", i);
-                }
-
-                // This is where input names are owned.  Borrow them
-                // from here
-                self.input_names.push(s.clone().to_string());
-
-            }else{
-                // This is class
-                
-                // Get the class name
-                let class = s.clone();
-
-                // Transfer the class name.  This is where class names
-                // are owned.  Borrow them from here
-                self.class_names.push(class.to_string());
-                
-                flag = false;
-            }
+            self.names.push(s.to_string());
         }
-
+        for i in 0..self.names.len() - 1 {
+            self.input_names.push(self.names[i].clone());
+        }
+        eprintln!("Names: {:?}", self.names);
+        eprintln!("Input Names: {:?}", self.input_names);
+        
         // Loop over the data storing it in the rows
         loop {
             let mut line:String = String::new();
