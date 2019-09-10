@@ -510,6 +510,7 @@ impl Node {
     /// Recursively evaluate a tree over a set of inputs.  This is
     /// where operators are defined.
     pub fn evaluate(&self, inputs:&Inputs)->Option<f64> {
+        // FIXME Should return a result
         macro_rules! evaluate {
             ($a:ident) => {
                 match self.$a {
@@ -524,7 +525,7 @@ impl Node {
             }
         }
 
-        match self.o {
+        let ret = match self.o {
             Operator::Terminal(TerminalType::Float(f)) => Some(f),
             Operator::Terminal(TerminalType::Inputf64(ref s)) => Some(*(inputs.get(s).unwrap())),
             Operator::If => {
@@ -583,6 +584,7 @@ impl Node {
                 // FIXME  Divide by 0.0???!
                 Some(1.0/left)
             },
-        }
+        };
+        ret
     }
 }// impl Node
