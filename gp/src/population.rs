@@ -31,6 +31,7 @@ use score::Score;
 use std::collections::BTreeMap;    
 use std::collections::HashMap;    
 use std::collections::hash_map::Entry::Vacant;
+use std::f64;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -375,7 +376,7 @@ impl Population {
                         let id = self.forest.maxid + 1;
                         {
                             bnd.write_line(&format!("Recreate {}/(Sc: {}) {}",
-                                                    id, &sc.quality, n.to_string()));
+                                                    id, &sc.quality(), n.to_string()));
                         }
                         self.forest.insert(Tree{id:id, score:sc, tree:n});
                         self.forest.maxid = id;
@@ -394,7 +395,7 @@ impl Population {
     fn _check(forest:&Forest) -> bool {
         let mut ret = true;
         for (_, v) in forest.trees.iter() {
-            if !v.score.quality.is_finite() {
+            if !v.score.quality().is_finite() {
                 ret = false;
                 break;
             }
@@ -446,35 +447,64 @@ impl Population {
         // selection:
         // FIXME Return a reference to a tree not a id
         
-        let total_score:f64 =
-            forest.score_trees.iter().
-            fold(0.0,
-                 //  `a` is the accumulator and (b,v) is element from
-                 //  score_trees. `b` is a `Score` and v a vector of
-                 //  individuals. This fold returns total score over
-                 //  all individuals
-                 | a, (ref b, ref v)| {
-                     b.quality() * v.len() as f64 + a
-                 });
+        // FIXME There is a obvious optimisation: The `wheel` does not
+        // need to be recalculated each time this is called.
+        let mut total_score:f64 = 0.0;
+        let mut max_score = 0.0;
+        let mut min_score  = f64::MAX;
+        let mut total = 0;
+        for (st, vt) in forest.score_trees.iter() {
+            let ts = st.quality();
+            if ts > max_score {
+                max_score = ts;
+            }else if ts < min_score {
+                min_score = ts;
+            }
+            total_score += st.quality() * vt.len() as f64;
+            total += vt.len();
+        }
+        
         if total_score == 0.0 {
             // Return a random key
             let key_count = forest.trees.keys().count();
             forest.trees.get(forest.trees.keys().nth(rng::gen_range(0, key_count - 1)).unwrap()).unwrap().id
         }else{
 
-            let sel = rng::gen_range(0.0, total_score); 
+            // Build the abstract roulette wheel.  Each individual has
+            // a "slot" on the wheel that is sized in proportion of
+            // their score.  The individuals with the lowest score are
+            // allocated the difference between the maximum and
+            // minimum scores divided by the population.  The
+            // individual with the largest score is allocated one.
+            // The rest are distributed linearly by their score.
+            let av = (max_score - min_score)/total as f64; 
+
+            let wheel:Vec<(usize, f64)> =
+                forest.trees.iter().map(|(_, t)|{
+                    // eprintln!("Making Wheel id {} score {} diff {} max_score {}",
+                    //           t.id,  t.score.quality(), diff, max_score);
+                    (t.id, (av + t.score.quality() - min_score)/(av + max_score - min_score))}).collect();
+
+            // The lowest score is now av/(max_score - diff) and the highest is 1.0.
+            // Check as the total value in the wheel is accumulated:
+            let mut wheel_tot = 0.0;
+            for (_, s) in wheel.iter() {
+                // eprintln!("Check Wheel: {} {}", i, s);
+                wheel_tot += s;
+            }
+            
+            assert!(wheel_tot > 0.0);
+            let sel = rng::gen_range(0.0, wheel_tot); 
+            // `sel` is the selector for the "roulette wheel".  
             let mut  acc = 0.0;
             let mut ret:Option<usize> = None;  // Index of selected individual
-            'lable:
-            for (s, v) in forest.score_trees.iter() {
-                for t in v {
-                    acc += s.quality();
-                    if acc > sel {
-                        // Have the tree's string rep in t.  Get the
-                        // actual tree's id.  
-                        ret = Some(forest.trees.get(t).unwrap().id);
-                        break 'lable;
-                    }
+            for (i, s) in wheel.iter() {
+                acc += s;
+                if acc > sel {
+                    // Have the tree's string rep in t.  Get the
+                    // actual tree's id.
+                    ret = Some(*i);
+                    break;
                 }
             }
             let ret = match ret {
@@ -512,7 +542,7 @@ impl Population {
 
             match  score_individual(&n, d_all, true) {
                 Ok(sc) => {
-                    bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.quality, n.to_string())); 
+                    bnd_rec.write_line(&format!("Create {}/(Sc: {}) {}", id, sc.quality(), n.to_string())); 
                     forest.insert(Tree{id:id, score:sc, tree:n});
                     forest.maxid = id;
                     true
@@ -673,7 +703,7 @@ impl Population {
         
         let mut state = String::new();
         for (s, t) in forest.trees.iter() {
-            state += &format!("Score: {} Node: {}\n", t.score.quality,s);
+            state += &format!("Score: {} Node: {}\n", t.score.quality(),s);
         }
 
         let mut file = File::create(save_file).unwrap();
@@ -735,7 +765,7 @@ fn _new_generation(forest:&Forest,
                     new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
                     new_forest.maxid = id;
                     bnd_rec.write_line(&format!("Cross {} + {} --> {}/(Sc:{}): {}",
-                                                l, r, id, &sc.quality, st));
+                                                l, r, id, &sc.quality(), st));
                 },
                 Err(e) => {
                     bnd_rec.write_line(&format!("Cross Failed {:?} Cross {} + {} ",
@@ -774,7 +804,7 @@ fn _new_generation(forest:&Forest,
                         let id = new_forest.maxid;
                         new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
                         bnd_rec.write_line(format!("Mutate {} --> {}: {}/(Sc: {})",
-                                                   id0, new_forest.maxid, st, &sc.quality).as_str());
+                                                   id0, new_forest.maxid, st, &sc.quality()).as_str());
                     },
                     Err(e) => bnd_rec.write_line(format!("Failed Mutate {:?}", e).as_str()),
                 };
