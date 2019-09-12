@@ -89,15 +89,15 @@ impl Forest {
     }
 
     // Return number of trees in self.trees - number in score_trees.
-    // If the forrest is consistent then this will return 0
+    // If the forest is consistent then this will return 0
     fn _check_sz(&self) -> i32 {
         self.trees.len() as i32 - self.score_trees.iter().fold(0, |mut sum, x| {sum += x.1.len(); sum})  as i32
     }
-    /// Insert a Tree into the Forrest
+    /// Insert a Tree into the Forest
 
     /// # Panics
 
-    /// If the tree is already in the forrest this will panic.
+    /// If the tree is already in the forest this will panic.
     /// Duplicate trees are not allowed.
     fn insert(&mut self, tree:Tree) {
         // Check for duplicates
@@ -121,12 +121,12 @@ impl Forest {
         assert!(self._check_sz() == 0);
     }
 
-    // Check if a Tree is in this Forrest by string
+    // Check if a Tree is in this Forest by string
     fn has_tree_str(&self, t:&str) -> bool {
         self.trees.contains_key(t)
     }
 
-    // Check if a Tree is in this Forrest using the NodeBox
+    // Check if a Tree is in this Forest using the NodeBox
     fn has_tree_nb(&self, t:&NodeBox) -> bool {
         self.has_tree_str(t.to_string().as_str())
     }
@@ -274,7 +274,7 @@ impl Population {
         loop {
             
             generation = generation + 1;
-
+            eprintln!("Generation {}", generation);
             // If we have done as many generations as we
             // plan to, quit
             if generation > num_generations {
@@ -445,8 +445,6 @@ impl Population {
         // Return the id of a individual selected using roulette wheel
         // selection:
         // FIXME Return a reference to a tree not a id
-        // FIXME What part should class play in selection?
-
         
         let total_score:f64 =
             forest.score_trees.iter().
@@ -479,14 +477,18 @@ impl Population {
                     }
                 }
             }
-            match ret {
+            let ret = match ret {
                 Some(r) => r,
                 None => {
                     // This should not happen
                     panic!("Could not select individual acc: {} sel: {} total_score: {}",
                            acc, sel, total_score)
                 },
-            }
+            };
+            let f = Population::_get_tree_id(&forest, ret);
+            eprintln!("Roulette select {} acc: {} sel: {} total_score: {} score: {} tree: {}",
+                     ret, acc, sel, total_score, f.score.quality(), f.tree.to_string());
+            ret
         }
     }
 
@@ -550,10 +552,10 @@ impl Population {
     }
 
     fn _do_crossover(forest:&Forest)  -> (NodeBox, usize, usize){
+        // FIXME There is no concept of "attraction" here.  There
+        // could be some algorithm where the second tree selected
+        // could depend on the first.  
         let i0 = Population::roulette_selection(forest);
-        // FIXME Here is a possible place to take account of class.
-        // Could apply some sort of "class prejudice" as a probability
-        // that `i1` will not be accepted if it is of a different class
         let i1 = Population::roulette_selection(forest);
         (Population::_crossover(forest, i0, i1), i0, i1)
     }
