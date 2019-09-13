@@ -69,21 +69,6 @@ impl PartialOrd for Score {
     }
 }
 
-#[inline]
-fn loss_function(t:f64, y:f64) -> f64 {
-    // y is the estimate, t the true value 
-
-    // True value is -1.0 if this the input is not a member of the class
-    // the individual tests for, and 1.0 if it is
-    
-    // Hinge loss
-    let loss = 1.0-t*y;
-    if loss < 0.0 {
-        0.0
-    }else{
-        loss
-    }
-}
 #[derive(Debug)]
 pub enum ScoreError {
     FailedEvaluation,
@@ -144,15 +129,17 @@ pub fn score_individual(
         // Get the estimate
         match node.evaluate(&inputs) {
             Some(e) => {        
-                let l = loss_function(t, e);
+                let l = (t-e).powi(2);
                 y_d.push(l);
             },
             None => return Err(ScoreError::FailedEvaluation),
         };
     }
 
-    let s = (1.0/(index.len() as f64))*
-        y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum});
+
+    let rss = y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum/(y_d.len().pow(2) as f64)}).sqrt();
+    // Must be increasing.  In this case maximum is 1, minimum aproaches 0
+    let s = 1.0/(rss + 1.0); 
     //println!("Node: {} Score: {}", node.to_string(), s);
     match s.is_finite() {
         true => Ok(Score{quality:s,}),

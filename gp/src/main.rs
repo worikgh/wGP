@@ -139,7 +139,7 @@ mod tests {
             let s = "Remainder Q Float 3.0";
             let _n = Box::new(Node::new_from_string(s));
             match score_individual(&_n, &d, false) {
-                Ok(ss) => assert_eq!(ss.quality(), 0.0),
+                Ok(ss) => assert_eq!(ss.quality(), 1.0),
                 Err(e) => panic!("{:?}", e),
             };
 

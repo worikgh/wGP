@@ -106,7 +106,7 @@ impl Forest {
         let str_rep:&str = string_rep.as_str();
         match self.trees.get(str_rep){
             Some(_) => {
-                panic!("Inserting a duplicate tree");
+                panic!("Inserting a duplicate tree: {}", str_rep);
             },
             None => {
                 self.trees.insert(str_rep.to_string(), tree.clone());
@@ -264,9 +264,7 @@ impl Population {
             // Initialise a random population
 
             if self.forest.trees.len() == 0 {
-                _initialise_rand(&mut self.forest,
-                                 &self.data,
-                                 &mut bnd_rec, max_population);
+                self._initialise_rand(&mut bnd_rec, max_population);
             }else{
                 eprintln!("population Not calling _initialise_rand");
             }
@@ -285,11 +283,10 @@ impl Population {
             // simulation?
             
             // Advance simulation by generating a new forest
-            self.forest = _new_generation(&self.forest,
+            self.forest = self._new_generation(
                                           mutate_prob, copy_prob,
                                           crossover_percent,
                                           max_population,
-                                          &self.data,
                                           &mut bnd_rec,
                                           save_file.as_str());
 
@@ -342,51 +339,60 @@ impl Population {
 
     /// Restore state from a save file
     fn restore_state(&mut self) -> std::io::Result<()>{
-
-        let file_name = self._save_file_name();
-        let file = File::open(file_name)?;
-        let mut buf_reader = BufReader::new(file);
-
-        self.forest.clear();
-
         // Need to record each individual that is recreated.
         let bnd_fname = self._bnd_file_name();
         let mut bnd = Recorder::new(bnd_fname.as_str());
+
+        let file_name = self._save_file_name();
+        let file = File::open(file_name)?;
+        let buf_reader = BufReader::new(file);
+        let lines = buf_reader.lines();
+
+        self.forest.clear();
+
         
-        // Get first line, allocate names 
-        let mut line:String = String::new();
-        while buf_reader.read_line(&mut line)? != 0 {
-            let  split = line.as_str().split(" ");
-            let v:Vec<&str> = split.collect();
-            let mut f = false; // Set this when we get to node
-            let mut tree = String::new();
-            for w in v {
-                if f {
-                    tree = tree + " " + w;
-                }
-                if w == "Node:" {
-                    f = true;
-                }
-            }
-            // tree is string representation of a tree
-            let n = Box::new(Node::new_from_string(tree.as_str()));
-            match  score_individual(&n, &self.data, true) {
-                Ok(sc) => {
-                    if sc.is_finite() {
-                        let id = self.forest.maxid + 1;
-                        {
-                            bnd.write_line(&format!("Recreate {}/(Sc: {}) {}",
-                                                    id, &sc.quality(), n.to_string()));
+        for line in lines  {
+            match line {
+                Ok(line) => {
+                    //eprintln!("Restore state - Tree: {}", line);
+                    // Split the line into ws separated words. Iterate
+                    // over words and set `f` at "Node:".  Tree is
+                    // after that
+                    let mut f = false; 
+                    let mut tree = String::new();
+
+                    let  split = line.as_str().split(" ");
+                    let v:Vec<&str> = split.collect();
+                    for w in v {
+                        if f {
+                            tree = tree + " " + w;
                         }
-                        self.forest.insert(Tree{id:id, score:sc, tree:n});
-                        self.forest.maxid = id;
+                        if w == "Node:" {
+                            f = true;
+                        }
                     }
+                    // tree is string representation of a tree
+                    let n = Box::new(Node::new_from_string(tree.as_str()));
+                    match  score_individual(&n, &self.data, true) {
+                        Ok(sc) => {
+                            if sc.is_finite() {
+                                let id = self.forest.maxid + 1;
+                                {
+                                    bnd.write_line(&format!("Recreate {}/(Sc: {}) {}",
+                                                            id, &sc.quality(), n.to_string()));
+                                }
+                                self.forest.insert(Tree{id:id, score:sc, tree:n});
+                                self.forest.maxid = id;
+                            }
+                        },
+                        Err(e) => {
+                            let s = format!("Recreate Failed {:?}  {}",
+                                            e, n.to_string());
+                            bnd.write_line(&s);
+                        },
+                    };
                 },
-                Err(e) => {
-                    let s = format!("Recreate Failed {:?}  {}",
-                                    e, n.to_string());
-                    bnd.write_line(&s);
-                },
+                Err(e) => panic!("{}", e),
             };
         }
         Ok(())
@@ -440,86 +446,52 @@ impl Population {
     //
     // Selection algorithms.
     //
-    fn roulette_selection(forest:&Forest) -> usize {
+    fn roulette_selection(&self, wheel:&Vec<(usize, f64)>) -> usize {
 
         // https://en.wikipedia.org/wiki/Fitness_proportionate_selection
         // Return the id of a individual selected using roulette wheel
         // selection:
         // FIXME Return a reference to a tree not a id
         
-        // FIXME There is a obvious optimisation: The `wheel` does not
-        // need to be recalculated each time this is called.
-        let mut total_score:f64 = 0.0;
-        let mut max_score = 0.0;
-        let mut min_score  = f64::MAX;
-        let mut total = 0;
-        for (st, vt) in forest.score_trees.iter() {
-            let ts = st.quality();
-            if ts > max_score {
-                max_score = ts;
-            }else if ts < min_score {
-                min_score = ts;
-            }
-            total_score += st.quality() * vt.len() as f64;
-            total += vt.len();
+        
+
+        // The lowest score is now av/(max_score - diff) and the highest is 1.0.
+        // Check as the total value in the wheel is accumulated:
+        let mut wheel_tot = 0.0;
+        for (_, s) in wheel.iter() {
+            // eprintln!("Check Wheel: {} {}", i, s);
+            wheel_tot += s;
         }
         
-        if total_score == 0.0 {
-            // Return a random key
-            let key_count = forest.trees.keys().count();
-            forest.trees.get(forest.trees.keys().nth(rng::gen_range(0, key_count - 1)).unwrap()).unwrap().id
-        }else{
-
-            // Build the abstract roulette wheel.  Each individual has
-            // a "slot" on the wheel that is sized in proportion of
-            // their score.  The individuals with the lowest score are
-            // allocated the difference between the maximum and
-            // minimum scores divided by the population.  The
-            // individual with the largest score is allocated one.
-            // The rest are distributed linearly by their score.
-            let av = (max_score - min_score)/total as f64; 
-
-            let wheel:Vec<(usize, f64)> =
-                forest.trees.iter().map(|(_, t)|{
-                    // eprintln!("Making Wheel id {} score {} diff {} max_score {}",
-                    //           t.id,  t.score.quality(), diff, max_score);
-                    (t.id, (av + t.score.quality() - min_score)/(av + max_score - min_score))}).collect();
-
-            // The lowest score is now av/(max_score - diff) and the highest is 1.0.
-            // Check as the total value in the wheel is accumulated:
-            let mut wheel_tot = 0.0;
-            for (_, s) in wheel.iter() {
-                // eprintln!("Check Wheel: {} {}", i, s);
-                wheel_tot += s;
-            }
-            
-            assert!(wheel_tot > 0.0);
-            let sel = rng::gen_range(0.0, wheel_tot); 
-            // `sel` is the selector for the "roulette wheel".  
-            let mut  acc = 0.0;
-            let mut ret:Option<usize> = None;  // Index of selected individual
-            for (i, s) in wheel.iter() {
-                acc += s;
-                if acc > sel {
-                    // Have the tree's string rep in t.  Get the
-                    // actual tree's id.
-                    ret = Some(*i);
-                    break;
-                }
-            }
-            let ret = match ret {
-                Some(r) => r,
-                None => {
-                    // This should not happen
-                    panic!("Could not select individual acc: {} sel: {} total_score: {}",
-                           acc, sel, total_score)
-                },
-            };
-            let f = Population::_get_tree_id(&forest, ret);
-            eprintln!("Roulette select {} acc: {} sel: {} total_score: {} score: {} tree: {}",
-                     ret, acc, sel, total_score, f.score.quality(), f.tree.to_string());
-            ret
+        if wheel_tot <=  0.0 {
+            eprintln!("wheel_tot {}", wheel_tot);
         }
+        let sel = rng::gen_range(0.0, wheel_tot); 
+        // `sel` is the selector for the "roulette wheel".  
+        let mut  acc = 0.0;
+
+        // To output the size of the wheel area the selected
+        // individual has so <size in wheel> V. <frequencey of
+        // selection> can be ploted
+        let mut debug_s = 0.0;
+        
+        let mut ret:usize = 0;  // Index of selected individual
+        for (i, s) in wheel.iter() {
+            acc += s;
+            if acc > sel {
+                // Have the tree's string rep in t.  Get the
+                // actual tree's id.
+                ret = *i;
+                debug_s = *s;
+                break;
+            }
+        }
+        {
+            let f = Population::_get_tree_id(&self.forest, ret);
+            eprintln!("Roulette select id: {} wheel: {} acc: {} sel: {} score: {} tree: {}",
+                      ret, debug_s, acc, sel, f.score.quality(), f.tree.to_string());
+        }
+        ret
     }
 
     // End of selection algorithms
@@ -553,6 +525,24 @@ impl Population {
             false
         }
     }
+    pub fn _initialise_rand(&mut self,
+                            bnd_rec:&mut Recorder,
+                            max_population:usize){
+        // Initialise with a random tree
+
+        loop {
+
+            // Random individual.  'add_individual' returns true when a
+            // unique individual is created.  FIXME FIXTHAT!
+            // _add_individual should be much more deterministic, pseudo
+            // random
+            while !Population::_add_individual(&self.data, bnd_rec, &mut self.forest) {} 
+
+            if self.forest.trees.len() == max_population {
+                break;
+            }
+        }
+    }        
 
     fn _delete_worst(forest:&mut Forest, bnd_rec:&mut Recorder) {
 
@@ -581,12 +571,13 @@ impl Population {
         
     }
 
-    fn _do_crossover(forest:&Forest)  -> (NodeBox, usize, usize){
+    fn _do_crossover(forest:&Forest, wheel:&Vec<(usize, f64)>)  -> (NodeBox, usize, usize){
         // FIXME There is no concept of "attraction" here.  There
         // could be some algorithm where the second tree selected
         // could depend on the first.  
-        let i0 = Population::roulette_selection(forest);
-        let i1 = Population::roulette_selection(forest);
+        let i0;
+        i0 = Population::roulette_selection(forest, wheel);
+        let i1 = Population::roulette_selection(forest, wheel);
         (Population::_crossover(forest, i0, i1), i0, i1)
     }
 
@@ -701,175 +692,202 @@ impl Population {
 
     fn _save_trees(forest:&Forest, save_file:&str){
         
-        let mut state = String::new();
-        for (s, t) in forest.trees.iter() {
-            state += &format!("Score: {} Node: {}\n", t.score.quality(),s);
-        }
-
         let mut file = File::create(save_file).unwrap();
         file.lock_exclusive().expect("Failed to lock save file");
-        file.write_all(state.as_bytes()).unwrap();
-    }
-}
-
-
-
-pub fn _initialise_rand(forest:&mut Forest, d_all:&Data, bnd_rec:&mut Recorder, max_population:usize){
-    // Initialise with a random tree
-    loop {
-
-        // Random individual.  'add_individual' returns true when a
-        // unique individual is created.  FIXME FIXTHAT!
-        // _add_individual should be much more deterministic, pseudo
-        // random
-        while !Population::_add_individual(d_all, bnd_rec, forest) {} 
-
-        if forest.trees.len() == max_population {
-            break;
+        for k in forest.score_trees.keys() {
+            for t in forest.score_trees.get(&k).unwrap().iter() {
+                file.write_all(format!("Id: {} Score: {} Node: {}\n", forest.trees.get(t).unwrap().id, k.quality(), t).as_bytes()).unwrap();
+            }
         }
+        // let mut state = String::new();
+        // for (s, t) in forest.trees.iter() {
+        //     state += &format!("Id: {} Score: {} Node: {}\n", t.id, t.score.quality(),s);
+        // }
+
+        // file.write_all(state.as_bytes()).unwrap();
     }
-}        
-fn _new_generation(forest:&Forest,
-                   mutate_prob:usize,
-                   copy_prob:usize,
-                   crossover_percent:usize, 
-                   max_population:usize,
-                   d_all:&Data,
-                   bnd_rec:&mut Recorder,
-                   save_file:&str) -> Forest // New trees
-{
+    fn _new_generation(&self,
+                       mutate_prob:usize,
+                       copy_prob:usize,
+                       crossover_percent:usize, 
+                       max_population:usize,
+                       bnd_rec:&mut Recorder,
+                       save_file:&str) -> Forest // New trees
+    {
+        let forest = &self.forest;
+        let d_all = &self.data;
+
+        let mut new_forest = Forest::new();
+
+        // The unique id given to each tree
+        new_forest.maxid = forest.maxid + 1;
 
 
-    let mut new_forest = Forest::new();
-
-    // The unique id given to each tree
-    new_forest.maxid = forest.maxid + 1;
-
-    // Generate some of new population from the old population. The
-    // number of crossovers to do is (naturally) population.len()
-    // * crossover_percent/100
-    let ncross = (forest.trees.len() * crossover_percent)/100;
-    let mut nc = 0;
-
-    while nc < ncross  {
-
-        let (nb, l, r) = Population::_do_crossover(&forest);
-
-        let st = (*nb).to_string();
-        if !new_forest.has_tree_nb(&nb) {
-
-            // A unique child in next generation
-            match score_individual(&nb, d_all, true) {
-                Ok(sc) => {
-                    let id = new_forest.maxid+1;
-                    new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
-                    new_forest.maxid = id;
-                    bnd_rec.write_line(&format!("Cross {} + {} --> {}/(Sc:{}): {}",
-                                                l, r, id, &sc.quality(), st));
-                },
-                Err(e) => {
-                    bnd_rec.write_line(&format!("Cross Failed {:?} Cross {} + {} ",
-                                                e, l, r));
-                    
-                },
-            };
+        // FIXME There is a obvious optimisation: The `wheel` does not
+        // need to be recalculated each time this is called.
+        //let mut total_score:f64 = 0.0;
+        let mut max_score = 0.0;
+        let mut min_score  = f64::MAX;
+        let mut total = 0;
+        for (st, vt) in forest.score_trees.iter() {
+            let ts = st.quality();
+            if ts > max_score {
+                max_score = ts;
+            }else if ts < min_score {
+                min_score = ts;
+            }
+            total += vt.len();
         }
-        nc += 1;
-    }
-    
-    // Do mutation.  Take mut_probab % of trees, mutate them, add
-    // them to the new population
-    for (_, t) in forest.trees.iter() {
-        if rng::gen_range(0, 100) < mutate_prob {
 
-            // The id of the tree being mutated
-            let id0 = t.id;
 
-            // Copy the tree and mutate it.  Loose interest in
-            // original tree now
-            let t = t.tree.copy();
+        // Build the abstract roulette wheel.  Each individual has
+        // a "slot" on the wheel that is sized in proportion of
+        // their score.  The individuals with the lowest score are
+        // allocated the difference between the maximum and
+        // minimum scores divided by the population.  The
+        // individual with the largest score is allocated one.
+        // The rest are distributed linearly by their score.
+        let av = (max_score - min_score)/total as f64; 
 
-            let nb = Population::_mutate_tree(t, d_all);
+        let wheel:Vec<(usize, f64)> =
+            forest.trees.iter().map(|(_, t)|{
+                // eprintln!("Making Wheel id {} score {} diff {} max_score {}",
+                //           t.id,  t.score.quality(), diff, max_score);
+                (t.id, (av + t.score.quality() - min_score)/(av + max_score - min_score))}).collect();
 
-            // Convert to a string to check for duplicates and for
-            // the record 
+
+        for (id, gp) in wheel.iter() {
+            
+            eprintln!("Wheel: {}, {}, {} ", id, gp, Population::_get_tree_id(&forest, *id).score.quality());
+        }
+        
+        // Generate some of new population from the old population. The
+        // number of crossovers to do is (naturally) population.len()
+        // * crossover_percent/100
+        let ncross = (forest.trees.len() * crossover_percent)/100;
+        let mut nc = 0;
+
+        while nc < ncross  {
+
+            let (nb, l, r) = Population::_do_crossover(&forest, &wheel);
+
             let st = (*nb).to_string();
-            if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+            if !new_forest.has_tree_nb(&nb) {
 
-                // Unique in the new population
-
-                match  score_individual(&nb, d_all, true) {
+                // A unique child in next generation
+                match score_individual(&nb, d_all, true) {
                     Ok(sc) => {
-                        new_forest.maxid += 1;
-                        let id = new_forest.maxid;
+                        let id = new_forest.maxid+1;
                         new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
-                        bnd_rec.write_line(format!("Mutate {} --> {}: {}/(Sc: {})",
-                                                   id0, new_forest.maxid, st, &sc.quality()).as_str());
+                        new_forest.maxid = id;
+                        bnd_rec.write_line(&format!("Cross {} + {} --> {}/(Sc:{}): {}",
+                                                    l, r, id, &sc.quality(), st));
                     },
-                    Err(e) => bnd_rec.write_line(format!("Failed Mutate {:?}", e).as_str()),
+                    Err(e) => {
+                        bnd_rec.write_line(&format!("Cross Failed {:?} Cross {} + {} ",
+                                                    e, l, r));
+                        
+                    },
                 };
-            }                
+            }
+            nc += 1;
         }
-    }
+        
+        // Do mutation.  Take mut_probab % of trees, mutate them, add
+        // them to the new population
+        for (_, t) in forest.trees.iter() {
+            if rng::gen_range(0, 100) < mutate_prob {
 
-    // Copy the best trees.
-    let mut cp = 0; // Number copied
-    let ncp = (forest.trees.len()*100)/copy_prob; // Number to copy
-    for (_, vt) in forest.score_trees.iter() {
-        //let it = forest.iter();
-        // FIXME This could be probabilistic with roulette wheel
-        // selection.
-        for st in vt.iter() {
+                // The id of the tree being mutated
+                let id0 = t.id;
 
-            if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+                // Copy the tree and mutate it.  Loose interest in
+                // original tree now
+                let t = t.tree.copy();
 
-                // Unique in the new population
-                let t = forest.trees.get(st).unwrap();
-                new_forest.insert(t.clone());
-                cp += 1;
+                let nb = Population::_mutate_tree(t, d_all);
+
+                // Convert to a string to check for duplicates and for
+                // the record 
+                let st = (*nb).to_string();
+                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
+                    // Unique in the new population
+
+                    match  score_individual(&nb, d_all, true) {
+                        Ok(sc) => {
+                            new_forest.maxid += 1;
+                            let id = new_forest.maxid;
+                            new_forest.insert(Tree{id:id, score:sc.clone(), tree:nb});
+                            bnd_rec.write_line(format!("Mutate {} --> {}: {}/(Sc: {})",
+                                                       id0, new_forest.maxid, st, &sc.quality()).as_str());
+                        },
+                        Err(e) => bnd_rec.write_line(format!("Failed Mutate {:?}", e).as_str()),
+                    };
+                }                
+            }
+        }
+
+        // Copy the best trees.
+        let mut cp = 0; // Number copied
+        let ncp = (forest.trees.len()*100)/copy_prob; // Number to copy
+        for (_, vt) in forest.score_trees.iter() {
+            //let it = forest.iter();
+            // FIXME This could be probabilistic with roulette wheel
+            // selection.
+            for st in vt.iter() {
+
+                if let Vacant(_) = new_forest.trees.entry(st.clone()) {
+
+                    // Unique in the new population
+                    let t = forest.trees.get(st).unwrap();
+                    new_forest.insert(t.clone());
+                    cp += 1;
+                    if cp == ncp  {
+                        break;
+                    }
+                }
+                // FIXME The previous break should use a label or some thing
                 if cp == ncp  {
                     break;
                 }
             }
-            // FIXME The previous break should use a label or some thing
-            if cp == ncp  {
-                break;
-            }
+        }    
+
+        // New population is created in new_forest;
+        
+        // Eliminate all trees with no valid score and sort them 
+        new_forest = Population::_cull_sort(&new_forest, bnd_rec);
+
+        // Adjust population
+        while new_forest.trees.len() > max_population {
+            Population::_delete_worst(&mut new_forest, bnd_rec);
         }
-    }    
+        let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
+        while new_forest.trees.len() < max_population {
+            while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
+        }
+        if flag {
+            // Sort again as we added new individuals. FIXME cull_sort
+            // must be independant of Population for thread safety
+            new_forest = Population::_cull_sort(&new_forest, bnd_rec ); 
+        }
 
-    // New population is created in new_forest;
-    
-    // Eliminate all trees with no valid score and sort them 
-    new_forest = Population::_cull_sort(&new_forest, bnd_rec);
+        bnd_rec.buffer.flush().unwrap(); 
 
-    // Adjust population
-    while new_forest.trees.len() > max_population {
-        Population::_delete_worst(&mut new_forest, bnd_rec);
+        // FIXME check must be independent of Population for thread
+        // safety
+
+        if !Population::_check(&new_forest) {
+            panic!("Check failed");
+        }
+
+        Population::_save_trees(&new_forest, save_file);
+        assert!(new_forest._check_sz() == 0);
+        eprintln!("Saving to {}", save_file);
+        new_forest 
     }
-    let flag =  new_forest.trees.len() < max_population; // Set if new individuals  to be added
-    while new_forest.trees.len() < max_population {
-        while Population::_add_individual(d_all, bnd_rec, &mut new_forest){}
-    }
-    if flag {
-        // Sort again as we added new individuals. FIXME cull_sort
-        // must be independant of Population for thread safety
-        new_forest = Population::_cull_sort(&new_forest, bnd_rec ); 
-    }
-
-    bnd_rec.buffer.flush().unwrap(); 
-
-    // FIXME check must be independent of Population for thread
-    // safety
-
-    if !Population::_check(&new_forest) {
-        panic!("Check failed");
-    }
-
-    // FIXME save_trees must be independant of Population for
-    // thread safety
-    Population::_save_trees(&new_forest, save_file);
-    assert!(new_forest._check_sz() == 0);
-
-    new_forest 
 }
+
+
+
