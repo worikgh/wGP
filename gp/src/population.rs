@@ -50,7 +50,6 @@ struct Tree {
     tree:NodeBox,
 } 
 
-
 #[derive(Clone)]
 /// A collection of [Trees](struct.Tree.html)
 pub struct Forest {
@@ -571,14 +570,14 @@ impl Population {
         
     }
 
-    fn _do_crossover(forest:&Forest, wheel:&Vec<(usize, f64)>)  -> (NodeBox, usize, usize){
+    fn _do_crossover(&self, wheel:&Vec<(usize, f64)>)  -> (NodeBox, usize, usize){
         // FIXME There is no concept of "attraction" here.  There
         // could be some algorithm where the second tree selected
         // could depend on the first.  
         let i0;
-        i0 = Population::roulette_selection(forest, wheel);
-        let i1 = Population::roulette_selection(forest, wheel);
-        (Population::_crossover(forest, i0, i1), i0, i1)
+        i0 = self.roulette_selection(wheel);
+        let i1 = self.roulette_selection(wheel);
+        (self._crossover(i0, i1), i0, i1)
     }
 
     fn _mutate_tree(i:NodeBox, d_all:&Data) -> NodeBox {
@@ -642,7 +641,7 @@ impl Population {
     //     Population::_mutate_tree(i, &self.d_all)
     // }
     
-    fn _crossover(forest:&Forest, lidx:usize, ridx:usize) -> NodeBox {
+    fn _crossover(&self, lidx:usize, ridx:usize) -> NodeBox {
         // FIXME Use references to nodes (and lifetimes?) insted of
         // indexes.  Save on lookups
 
@@ -651,11 +650,11 @@ impl Population {
         let p:NodeBox;
         let c:NodeBox;
         if rng::random::<f64>() > 0.0 {
-            p = Population::_get_tree_id(&forest, lidx).tree.random_node();
-            c = Population::_get_tree_id(&forest, ridx).tree.random_node()
+            p = Population::_get_tree_id(&self.forest, lidx).tree.random_node();
+            c = Population::_get_tree_id(&self.forest, ridx).tree.random_node()
         }else{
-            c = Population::_get_tree_id(&forest, lidx).tree.random_node();
-            p = Population::_get_tree_id(&forest, ridx).tree.random_node()
+            c = Population::_get_tree_id(&self.forest, lidx).tree.random_node();
+            p = Population::_get_tree_id(&self.forest, ridx).tree.random_node()
         }
         // Make the new tree by copying c
         let c = c.copy();
@@ -689,23 +688,19 @@ impl Population {
         ret
     }
 
-
     fn _save_trees(forest:&Forest, save_file:&str){
         
         let mut file = File::create(save_file).unwrap();
         file.lock_exclusive().expect("Failed to lock save file");
         for k in forest.score_trees.keys() {
             for t in forest.score_trees.get(&k).unwrap().iter() {
-                file.write_all(format!("Id: {} Score: {} Node: {}\n", forest.trees.get(t).unwrap().id, k.quality(), t).as_bytes()).unwrap();
+                file.write_all(format!("Id: {} Score: {} Node: {}\n",
+                                       forest.trees.get(t).unwrap().id,
+                                       k.quality(), t).as_bytes()).unwrap();
             }
         }
-        // let mut state = String::new();
-        // for (s, t) in forest.trees.iter() {
-        //     state += &format!("Id: {} Score: {} Node: {}\n", t.id, t.score.quality(),s);
-        // }
-
-        // file.write_all(state.as_bytes()).unwrap();
     }
+    
     fn _new_generation(&self,
                        mutate_prob:usize,
                        copy_prob:usize,
@@ -723,9 +718,6 @@ impl Population {
         new_forest.maxid = forest.maxid + 1;
 
 
-        // FIXME There is a obvious optimisation: The `wheel` does not
-        // need to be recalculated each time this is called.
-        //let mut total_score:f64 = 0.0;
         let mut max_score = 0.0;
         let mut min_score  = f64::MAX;
         let mut total = 0;
@@ -769,7 +761,7 @@ impl Population {
 
         while nc < ncross  {
 
-            let (nb, l, r) = Population::_do_crossover(&forest, &wheel);
+            let (nb, l, r) = self._do_crossover(&wheel);
 
             let st = (*nb).to_string();
             if !new_forest.has_tree_nb(&nb) {
@@ -887,6 +879,7 @@ impl Population {
         eprintln!("Saving to {}", save_file);
         new_forest 
     }
+
 }
 
 
