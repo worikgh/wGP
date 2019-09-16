@@ -79,20 +79,7 @@ pub fn score_individual(
     d:&Data,
     use_testing:bool) -> Result<Score, ScoreError> {
 
-    // Score individual is called once per node.  Classifies it
-    // (decides what class it is for) and gives it a rating.
-
-    // Using data for which the classes are known, foreach class C run
-    // the Node for each example.  If the example is in Class C the
-    // desired result from the simulation is 1.0, if not it is -1.0.
-    // Using a loss function collect the results for each example in
-    // y_d.  The final score (score.quality) is 1.0/(1.0+mean(y_d)).
-    // The class is the class that gets the highest score.
-
-    // FIXME Score could have a third part that is a measure of
-    // specificity.  Unsure how to represent that in a scalar.
-    // Perhaps the difference between the best and the second best
-    // score (for two classes)?
+    // Score individual is called once per node
 
     // Get the data to do the evaluation on
     let index:&Vec<usize>;
@@ -136,7 +123,7 @@ pub fn score_individual(
         };
     }
 
-
+    // y_d is the errors squared
     let rss = y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum/(y_d.len().pow(2) as f64)}).sqrt();
     // Must be increasing.  In this case maximum is 1, minimum aproaches 0
     let s = 1.0/(rss + 1.0); 
