@@ -353,7 +353,7 @@ impl Population {
         for line in lines  {
             match line {
                 Ok(line) => {
-                    //eprintln!("Restore state - Tree: {}", line);
+
                     // Split the line into ws separated words. Iterate
                     // over words and set `f` at "Node:".  Tree is
                     // after that
@@ -371,7 +371,7 @@ impl Population {
                         }
                     }
                     // tree is string representation of a tree
-                    let n = Box::new(Node::new_from_string(tree.as_str()));
+                    let n = Box::new(Node::new_from_str(tree.as_str()));
                     match  score_individual(&n, &self.data, true) {
                         Ok(sc) => {
                             if sc.is_finite() {
@@ -452,20 +452,7 @@ impl Population {
         // selection:
         // FIXME Return a reference to a tree not a id
         
-        
-
-        // The lowest score is now av/(max_score - diff) and the highest is 1.0.
-        // Check as the total value in the wheel is accumulated:
-        let mut wheel_tot = 0.0;
-        for (_, s) in wheel.iter() {
-            // eprintln!("Check Wheel: {} {}", i, s);
-            wheel_tot += s;
-        }
-        
-        if wheel_tot <=  0.0 {
-            eprintln!("wheel_tot {}", wheel_tot);
-        }
-        let sel = rng::gen_range(0.0, wheel_tot); 
+        let sel = rng::gen_range(0.0, 1.0); 
         // `sel` is the selector for the "roulette wheel".  
         let mut  acc = 0.0;
 
@@ -487,8 +474,8 @@ impl Population {
         }
         {
             let f = Population::_get_tree_id(&self.forest, ret);
-            eprintln!("Roulette select id: {} wheel: {} acc: {} sel: {} score: {} tree: {}",
-                      ret, debug_s, acc, sel, f.score.quality(), f.tree.to_string());
+            eprintln!("Roulette select id: {} wheel: {} tree: {}",
+                      ret, debug_s, f.tree.to_string());
         }
         ret
     }
@@ -701,6 +688,44 @@ impl Population {
         }
     }
     
+    fn _make_wheel(forest:&Forest, config:&Config) -> Vec<(usize, f64)> {
+        let mut max_score = 0.0;
+        let mut min_score  = f64::MAX;
+        let mut total = 0;
+        for (st, vt) in forest.score_trees.iter() {
+            let ts = st.quality();
+            if ts > max_score {
+                max_score = ts;
+            }else if ts < min_score {
+                min_score = ts;
+            }
+            total += vt.len();
+        }
+
+        // Build the abstract roulette wheel.  Each individual has
+        // a "slot" on the wheel that is sized in proportion of
+        // their score.  The individuals with the lowest score are
+        // allocated the difference between the maximum and
+        // minimum scores divided by the population.  The
+        // individual with the largest score is allocated one.
+        // The rest are distributed linearly by their score.
+        let av = (max_score - min_score)/total as f64; 
+
+        // The sum of the wheel values is 1.0.  `tot` is the sum of
+        // all values assigned below that is used to normalise the
+        // values
+        let mut tot = 0.0;
+        let  ret:Vec<(usize, f64)> = forest.trees.iter().map(|(_, t)|{
+
+            let score = (t.id, (av + t.score.quality() - min_score)/(av + max_score - min_score));
+            let sz = (forest.count() as f64).log(10.0);
+            let v = ((config.get_f64("score_weight").unwrap()*score.1).powi(2) + 
+                     (config.get_f64("size_weight").unwrap()*sz).powi(2)).sqrt(); 
+            tot += v;
+            (t.id, v)
+        }).collect();
+        ret.iter().map(|(id, x)| (*id, x/tot)).collect()
+    }
     fn _new_generation(&self,
                        mutate_prob:usize,
                        copy_prob:usize,
@@ -718,41 +743,11 @@ impl Population {
         new_forest.maxid = forest.maxid + 1;
 
 
-        let mut max_score = 0.0;
-        let mut min_score  = f64::MAX;
-        let mut total = 0;
-        for (st, vt) in forest.score_trees.iter() {
-            let ts = st.quality();
-            if ts > max_score {
-                max_score = ts;
-            }else if ts < min_score {
-                min_score = ts;
-            }
-            total += vt.len();
-        }
 
 
-        // Build the abstract roulette wheel.  Each individual has
-        // a "slot" on the wheel that is sized in proportion of
-        // their score.  The individuals with the lowest score are
-        // allocated the difference between the maximum and
-        // minimum scores divided by the population.  The
-        // individual with the largest score is allocated one.
-        // The rest are distributed linearly by their score.
-        let av = (max_score - min_score)/total as f64; 
 
-        let wheel:Vec<(usize, f64)> =
-            forest.trees.iter().map(|(_, t)|{
-                // eprintln!("Making Wheel id {} score {} diff {} max_score {}",
-                //           t.id,  t.score.quality(), diff, max_score);
-                (t.id, (av + t.score.quality() - min_score)/(av + max_score - min_score))}).collect();
-
-
-        for (id, gp) in wheel.iter() {
-            
-            eprintln!("Wheel: {}, {}, {} ", id, gp, Population::_get_tree_id(&forest, *id).score.quality());
-        }
-        
+        let wheel = Population::_make_wheel(&self.forest, &self.config);
+        eprintln!("Wheel: {:?}", wheel);
         // Generate some of new population from the old population. The
         // number of crossovers to do is (naturally) population.len()
         // * crossover_percent/100
@@ -876,7 +871,7 @@ impl Population {
 
         Population::_save_trees(&new_forest, save_file);
         assert!(new_forest._check_sz() == 0);
-        eprintln!("Saving to {}", save_file);
+
         new_forest 
     }
 
@@ -884,3 +879,48 @@ impl Population {
 
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;    
+    use population::Tree;
+    use population::Forest;
+    use score::Score;
+    use std::collections::HashMap;    
+    use node::Node;
+    use node::NodeBox;
+    use config::Config;
+    
+    /// Test constructing a roulette wheel
+    #[test]
+    fn test_wheel() {
+        let mut trees:HashMap<String, Tree> = HashMap::new();
+        let s = "Float 0.1";
+        let t = Tree{
+            id:0,
+            score:Score{quality:1.0},
+            tree:NodeBox::new(Node::new_from_str(s)),
+        };
+        trees.insert(s.to_string(), t);
+        let mut score_trees:BTreeMap<Score, Vec<String>> = BTreeMap::new();
+        score_trees.insert(Score{quality:1.0}, vec![s.to_string()]);
+        let maxid = trees.len();
+        let forest = Forest {
+            trees:trees,
+            score_trees:score_trees,
+            maxid:maxid,
+        };
+
+        let mut data:HashMap<String, String> = HashMap::new();
+        data.insert("score_weight".to_string(), "1".to_string());
+        data.insert("size_weight".to_string(), "1".to_string());
+        let config = Config {
+            data:data,
+        };
+        
+        let wheel = Population::_make_wheel(&forest, &config);
+        assert_eq!(wheel.len(), 1);
+        assert_eq!(wheel[0].0, 0);
+        // assert_eq!(wheel.len(), 1);
+    }
+}
