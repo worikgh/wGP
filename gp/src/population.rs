@@ -3,23 +3,19 @@
 //! All the code to generate, evolve and utilise a population of
 //! programme trees.</br>
 
-//! API: new, start, classify, save_state, resume_state
+//! API: new, start, save_state, resume_state
 
 //! * new Constructor. Pass a [configuration](../config/index.html) object
 
 //! * start  Sets up and starts a simulation creating a population of trees
 
-//! * classify: Passed a example from the domain.  If it can be
-//! classified return Ok((String, Vec<(String, f64))) where the first
-//! string in the result is the class name that the example is
-//! classified as and the vector is all the classes and the associated
-//! probability (estimated by the population of trees) of the example
-//! being in that class
-
-//! * report: Display the best classifiers for each class.
+//! * simulate Run a individual over test data and utput the results
+//! to a file.
 
 //! * save_state restore_state Save or restore the population from
-//! disc. Unimplemented.
+//! disc. UNIMPLEMENTED.
+
+//! * report: Display the best classifiers for each class. UNIMPLEMENTED
 
 
 use config::Config;
@@ -38,6 +34,7 @@ use std::io::BufReader;
 use std::io::Write;
 use std::thread;
 use super::Data;
+use inputs::Inputs;
 use super::Recorder;
 use super::score_individual;
 
@@ -88,8 +85,8 @@ impl Forest {
         self.maxid = 0;
     }
 
-    // Return number of trees in self.trees - number in score_trees.
-    // If the forest is consistent then this will return 0
+    /// Return number of trees in self.trees - number in score_trees.
+    /// If the forest is consistent then this will return 0
     fn _check_sz(&self) -> i32 {
         self.trees.len() as i32 - self.score_trees.iter().fold(0, |mut sum, x| {sum += x.1.len(); sum})  as i32
     }
@@ -207,11 +204,16 @@ impl Population {
         
         // Get the data.  FIXME Document some (other) place where the
         // data files reside and how they are found
-        let data_path = format!("{}/Data/{}/{}",
-                                config.get_string("root_dir").expect("Config: root_dir"),
-                                config.get_string("name").expect("Config: name"),
-                                config.get_string("data_file").expect("Config: data_file"));
-        let data = Data::new(&data_path, config.get_usize("training_percent").expect("Config: training_percent"));
+        let data_file =
+            Population::_local_file_name_glbl(
+                config,
+                config.get_string("data_file").
+                    expect("Config: data_file").as_str()
+            );
+
+        let data = Data::new(&data_file,
+                             config.get_usize("training_percent").
+                             expect("Config: training_percent"));
         
         Population {
             forest:Forest::new(),
@@ -221,11 +223,17 @@ impl Population {
         }
     }
 
+    /// Entry point into the Genetic Programming simulator
     pub fn start(&mut self) -> Result<bool, String> {
-        
+        match self.config.get_string("action").unwrap().as_str() {
+            "evolve" => self._evolve(),
+            "simulate" => self.simulate(),
+            _ => Err("Unknown action!!".to_string()),
+        }
+    }
+    fn _evolve(&mut self) -> Result<bool, String> {
+
         // Get all the variables the simulation will need
-        //let forest_lock = self.forest.clone();
-        // let data = self.data.clone();
 
         // FIXME Make these probabilities f64s instead of
         // 'percentages' in [0..100]!!
@@ -248,7 +256,7 @@ impl Population {
         let save_file = self._save_file_name();
         
         // Write the header for the generation file
-        let s = "generation, best_id, Best Score, Individual".to_string();
+        let s = "elapsed, generation".to_string();
         generation_recorder.write_line(&s[..]);
         generation_recorder.buffer.flush().unwrap();
 
@@ -305,29 +313,89 @@ impl Population {
         Ok(true)
     }
 
-    #[allow(dead_code)]
-    fn best_idx(&self) -> usize {
-        0
-    }    
-    #[allow(dead_code)]
-    pub fn best_id(&self) -> usize {
-        panic!("Function that needs refactoring for new location of forests")
+    pub fn simulate(&self) -> Result<bool, String>{
+        let out_file_name =
+            self._local_file_name(
+                self.config.
+                    get_string("simulation_output_file").unwrap().as_str()
+            );
+        match self._simulate() {
+            Err(s) => Err(format!("Simulation failed: {}", s)),
+            Ok(results ) => {
+                // `results` is Vec<Vec<f64>> matrix.  First n-1
+                // columns arfe inputs, last column is simulated
+                // result
+                eprintln!("Population::simulate.  results.len() {}", results.len());
+                let mut file_out =
+                    File::create(out_file_name.as_str()).unwrap();
+                file_out.lock_exclusive().
+                    expect("Failed to lock simulation save file");
+                for r in results.iter() {
+                    let mut line = String::new();
+                    // Each row
+                    for c in r.iter() {
+                        // each column
+                        line += format!("{}, ", c).as_str();
+                    }
+                    line += "\n";
+                    file_out.write_all(line.as_bytes()).unwrap();
+                }
+                Ok(true)
+            },
+        }                
     }
-    
-    #[allow(dead_code)]
-    pub fn best_score(&self) -> & Score {
-        panic!("Function that needs refactoring for new location of forests")
-    }
+
 
     pub fn report(&self) -> String {
         "".to_string()
     }
 
-    fn _save_file_name(&self) -> String {
+    fn _simulate(&self) -> Result<Vec<Vec<f64>>, String> {
+
+        let tree_string = self.config.get_string("simulate_tree").unwrap();
+        let n = Box::new(Node::new_from_str(tree_string.as_str()));
+        let mut inputs = Inputs::new();
+        let mut ret:Vec<Vec<f64>> = Vec::new();
+        
+        for d in self.data.data.iter() {
+            // Use every data example
+            // FIXME A config variable cpould choose between all,
+            // testing or training.
+
+            // Line for this input.
+            let mut line:Vec<f64> = Vec::new();
+            // Prepare the input...
+            for j in 0..self.data.input_names.len() {
+                let v:f64 = (*d)[j];
+                let h = self.data.input_names[j].clone();
+                inputs.insert(h.as_str(), v);
+                line.push(v);
+            }
+            // Put the actual value.  FIXME This should be a option as
+            // not all data files wil have the solution, in the end.
+            line.push(*d.last().unwrap());
+            if let Some(e) =  n.evaluate(&inputs) {
+                line.push(e);
+            }
+            ret.push(line);
+        }
+        Ok(ret)
+    }
+    
+    /// Get file names local to the simulation.  Class function
+    fn _local_file_name_glbl(config:&Config, f:&str) -> String {
         format!("{}/Data/{}/{}",
-                self.config.get_string("root_dir").expect("Config: root_dir"),
-                self.config.get_string("name").expect("Config: name"),
-                self.config.get_string("save_file").unwrap())
+                config.get_string("root_dir").expect("Config: root_dir"),
+                config.get_string("name").expect("Config: name"),
+                f)
+    }
+    /// Get file names local to the simulation.  Method version
+    fn _local_file_name(&self, f:&str) -> String {
+        Population::_local_file_name_glbl(&self.config, f)
+    }
+    fn _save_file_name(&self) -> String {
+        self._local_file_name(self.config.
+                              get_string("save_file").unwrap().as_str())
     }
     fn _bnd_file_name(&self) -> String {
         format!("{}/Data/{}/{}",
@@ -346,10 +414,8 @@ impl Population {
         let file = File::open(file_name)?;
         let buf_reader = BufReader::new(file);
         let lines = buf_reader.lines();
-
         self.forest.clear();
 
-        
         for line in lines  {
             match line {
                 Ok(line) => {
@@ -881,15 +947,19 @@ impl Population {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::collections::BTreeMap;    
-    use population::Tree;
-    use population::Forest;
-    use score::Score;
-    use std::collections::HashMap;    
+    
+    use config::Config;
     use node::Node;
     use node::NodeBox;
-    use config::Config;
+    use population::Forest;
+    use population::Tree;
+    use score::Score;
+    use std::collections::BTreeMap;    
+    use std::collections::HashMap;    
+    use std::fs;
+    use std::fs::File;
+    use std::path::Path;
+    use super::*;
     
     /// Test constructing a roulette wheel
     #[test]
@@ -922,5 +992,51 @@ mod tests {
         assert_eq!(wheel.len(), 1);
         assert_eq!(wheel[0].0, 0);
         // assert_eq!(wheel.len(), 1);
+    }
+    #[test]
+    /// Test simulating a tree
+    fn test_simulation() -> std::io::Result<()>{
+        let name = "Test".to_string();
+        let trees:HashMap<String, Tree> = HashMap::new();
+        let score_trees:BTreeMap<Score, Vec<String>> = BTreeMap::new();
+        let _forest = Forest {
+            trees:trees,
+            score_trees:score_trees,
+            maxid:1,
+        };
+        let mut data:HashMap<String, String> = HashMap::new();
+
+        // Create the directory system to work in
+        if !Path::new("/tmp/Data").is_dir(){
+            fs::create_dir("/tmp/Data/").unwrap();
+        }
+        let home = format!("/tmp/Data/{}", name);
+        if !Path::new(home.as_str()).is_dir(){
+            fs::create_dir(home.as_str()).unwrap();
+        }
+        // Create the data file.  It is empty
+        let data_file = "test_data";
+        let data_file_fp = format!("{}/{}", home, data_file);
+        if !Path::new(data_file).is_file(){
+            File::create(data_file_fp.as_str()).unwrap();
+        }
+        
+        data.insert("simulation_output_file".to_string(),
+                    "test_simulation".to_string());
+        data.insert("training_percent".to_string(), "50".to_string());
+        data.insert("root_dir".to_string(), "/tmp".to_string());
+        data.insert("simulate_tree".to_string(),
+                    "Float 1.0".to_string());
+
+        data.insert("name".to_string(), name);
+        data.insert("data_file".to_string(),
+                    data_file.to_string());
+        let config = Config {
+            data:data,
+        };
+        let p = Population::new(&config);
+        let r = p.simulate();
+        assert!(r.is_ok());
+        Ok(())
     }
 }
