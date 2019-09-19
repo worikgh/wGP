@@ -1,19 +1,11 @@
 TESTS
 
-Visualisation of:
+Allowing for units in selection of operators.  E.g., if one input is
+weight and another is a length then it should be possible to prevent
+dividing one by the other.
 
-    Results.  How good classifier is
-    Crossover: No resources are allocated inside loop
-    Trees: graphviz
-
-Wrapper to write config file and to start simulation
-
-Mechanism to pause a simulation
-
-Mechanism to change parameters during a run (signal?)
-
-Wrapper to monitor a simulation and run classifiers on test data hile
-simulation still running
+Bias in selection in crossover.  When one candidate is selected for
+crossover then that should/could bias selection of next candidate.
 
 ADFs.  Very important.
 
