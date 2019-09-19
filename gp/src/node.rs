@@ -3,10 +3,7 @@ pub type NodeBox = Box<Node>;
 use std::fmt;
 use std::usize;
 use std::f64;
-//use std::f32;
 use rng;
-//use rand::distributions::{Distribution, Uniform};
-//use super::Operator;
 use inputs::Inputs;
 
 // The type of data that can be a terminal
@@ -85,7 +82,7 @@ pub struct Node {
 
 impl Node {
     #[allow(dead_code)]
-    pub fn new_from_string(s:&str) -> Node {
+    pub fn new_from_str(s:&str) -> Node {
         let mut iter = s.split_whitespace();
         Node::new_from_iter(&mut iter)
     }
@@ -128,9 +125,52 @@ impl Node {
         };
         
         Node{o:operator, l:l, r:r, d:d}
-    }    // Build a random tree
+    }
+
+    // pub fn rationalise(&self) -> Node {
+    //     // let mut ret:Node;
+    //     // match self.o {
+    //     //     Operator::Terminal(ref _) => (),
+    //     //     Operator::Log => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Invert => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //     }
+    //     //     Operator::Negate => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Add => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Multiply => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Remainder => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Gt => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::Lt => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //     },
+    //     //     Operator::If => {
+    //     //         ret.l = Some(Box::new(self.l.unwrap().rationalise()));
+    //     //         ret.r = Some(Box::new(self.r.unwrap().rationalise()));
+    //     //         ret.d = Some(Box::new(self.d.unwrap().rationalise()));
+    //     //     },
+    //     // };
+    //     self
+    // }
+
+    // Build a random tree
     /* Paramaters:
-     * entropy - A source of randomness
      * names - The names of the input fields
      * level - The distance from the root node for this node
      */
@@ -587,4 +627,80 @@ impl Node {
         };
         ret
     }
+
+    // Using known facts about operators reduce the size of a tree by
+    // eliminating redundant subtrees.
+    // pub fn reduce_tree(&mut o) -> Option<Operator> {
+    //     macro_rules! ev {
+    //     }
+    //     let ret = o {
+    //         // For floats return the number in a Some.  For inputs
+    //         // return None (cannot reduce what is not known)
+    //         Operator::Terminal(TerminalType::Float(f)) => Some(Operator::Terminal(TerminalType::Float(f))),
+    //         Operator::Terminal(TerminalType::Inputf64(ref s)) => None,
+
+    //         Operator::If => {
+    //             // For a `If` node check the condition.  If it is
+    //             // alays <0 replace the If node with the `r` leg, if
+    //             // it is always >0 replace with `l` leg.
+    //             match reduce_tree(&mut self.d) {
+    //                 Some(f) => {
+    //                     if f > 0.0 {
+    //                         Some(o.l)
+    //                     }else{
+    //                         Some(o.r)
+    //                     }
+    //                 },
+    //                 None => None,
+    //             }
+    //         },
+    //         Operator::Lt => {
+    //             let left = evaluate!(l);
+    //             let right = evaluate!(r);
+    //             if left < right {
+    //                 Some(1.0)
+    //             }else{
+    //                 Some(-1.0)
+    //             }
+    //         },
+    //         Operator::Gt => {
+    //             let left = evaluate!(l);
+    //             let right = evaluate!(r);
+    //             if left > right {
+    //                 Some(1.0)
+    //             }else{
+    //                 Some(-1.0)
+    //             }
+    //         },
+    //         Operator::Add => {
+    //             let left = evaluate!(l);
+    //             let right = evaluate!(r);
+    //             Some(left+right)
+    //         },
+    //         Operator::Remainder => {
+    //             let left = evaluate!(l);
+    //             let right = evaluate!(r);
+    //             Some(left%right)
+    //         },
+    //         Operator::Multiply => {
+    //             let left = evaluate!(l);
+    //             let right = evaluate!(r);
+    //             Some(left*right)
+    //         },
+    //         Operator::Negate => {
+    //             let left = evaluate!(l);
+    //             Some(-1.0*left)
+    //         },
+    //         Operator::Log => {
+    //             let left = evaluate!(l);
+    //             Some(left.ln())
+    //         },
+    //         Operator::Invert => {
+    //             let left = evaluate!(l);
+    //             // FIXME  Divide by 0.0???!
+    //             Some(1.0/left)
+    //         },
+    //     };
+    // }
+
 }// impl Node
