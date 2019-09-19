@@ -117,6 +117,7 @@ pub fn score_individual(
         match node.evaluate(&inputs) {
             Some(e) => {        
                 let l = (t-e).powi(2);
+                //eprintln!("e {} t {} t-e {} inp: {:?}", e, t, t-e, &inputs);
                 y_d.push(l);
             },
             None => return Err(ScoreError::FailedEvaluation),
@@ -124,10 +125,13 @@ pub fn score_individual(
     }
 
     // y_d is the errors squared
-    let rss = y_d.iter().fold(0.0, |mut sum, &x| {sum += x; sum/(y_d.len().pow(2) as f64)}).sqrt();
+    let ss = y_d.iter().fold(0.0, | sum, &x| {
+        sum + x as f64
+    });
+    let rss = (ss / y_d.len().pow(2) as f64).sqrt();
     // Must be increasing.  In this case maximum is 1, minimum aproaches 0
     let s = 1.0/(rss + 1.0); 
-    //println!("Node: {} Score: {}", node.to_string(), s);
+
     match s.is_finite() {
         true => Ok(Score{quality:s,}),
         false => Err(ScoreError::NonFiniteSummation),
