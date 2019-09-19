@@ -50,28 +50,28 @@ mod tests {
         let mut inputs = Inputs::new();
         let s = "Multiply Float 0.06 Negate Diameter";
         inputs.insert("Diameter", 10.0);
-        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        let t = Node::new_from_str(s).evaluate(&inputs).unwrap();
         assert_eq!(t, -0.60);
 
         let mut inputs = Inputs::new();
         let s = "Invert Float 0.1";
         inputs.insert("Diameter", 10.0);
-        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        let t = Node::new_from_str(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 10.0);
 
         let inputs = Inputs::new();
         let s = "Add Float 2000.0 Invert Float 0.1";
-        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        let t = Node::new_from_str(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 2010.0);
 
         let mut inputs = Inputs::new();
         let s = "Multiply Height Add Float 10.0 Invert Float 0.1";
         inputs.insert("Height", 10.0);
-        let t = Node::new_from_string(s).evaluate(&inputs).unwrap();
+        let t = Node::new_from_str(s).evaluate(&inputs).unwrap();
         assert_eq!(t, 200.0);
 
         let s = "If Lt x Float 0.0 Float -1.0 Float 1.0";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 1.0);
         let t = n.evaluate(&inputs).unwrap();
@@ -88,21 +88,21 @@ mod tests {
         assert_eq!(t, -1.0);        
 
         let s = "Gt Log If x x x x";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 1.0);
         let t = n.evaluate(&inputs).unwrap();
         assert_eq!(t, -1.0);        
 
         let s = "Lt Log If x x x x";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 1.0);
         let t = n.evaluate(&inputs).unwrap();
         assert_eq!(t, 1.0);        
 
         let s = "If Lt x y x y";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 1.2);
         inputs.insert("y", 1.1);
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(t, 1.1);        
 
         let s = "If Lt x y x y";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", -9.0);
         inputs.insert("y", 1.0);
@@ -118,12 +118,11 @@ mod tests {
         assert_eq!(t, -9.0);        
 
         let s = "Add Gt Remainder x y Float -0.1 Lt Remainder x y Float 0.1";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let mut inputs = Inputs::new();
         inputs.insert("x", 92.0);
         inputs.insert("y", 3.0);
         let t = n.evaluate(&inputs).unwrap();
-        eprintln!("Result: {}", t);
         assert_eq!(t, 0.0);        
     }
     #[test]
@@ -137,7 +136,7 @@ mod tests {
         };
         {
             let s = "Remainder Q Float 3.0";
-            let _n = Box::new(Node::new_from_string(s));
+            let _n = Box::new(Node::new_from_str(s));
             match score_individual(&_n, &d, false) {
                 Ok(ss) => assert_eq!(ss.quality(), 1.0),
                 Err(e) => panic!("{:?}", e),
@@ -146,7 +145,7 @@ mod tests {
         }
         {
             let s = "Remainder Q Float 3.1";
-            let _n = Box::new(Node::new_from_string(s));
+            let _n = Box::new(Node::new_from_str(s));
             match score_individual(&_n, &d, false) {
                 Ok(ss) => assert_ne!(ss.quality(), 0.0),
                 Err(e) => panic!("{:?}", e),
@@ -154,9 +153,18 @@ mod tests {
         }
     }
     #[test]
+    /// Test rationalising a Tree
+    // fn test_rationalise(){
+    //     let n1 = Node::new_from_str("Float 1.0");
+    //     let n2 = n1.rationalise();
+    //     assert_eq!(n1.to_string(), n2.to_string());
+        
+    // }
+
+    #[test]
     fn test_node_from_string(){
         let s = "Add Add Add Invert Height Diameter Add Negate Float 0.03049337449511591 Add Multiply Negate Invert Float 0.40090461861005733 Negate Diameter Negate Float 0.06321754406175395 Length";
-        let n = Node::new_from_string(s);
+        let n = Node::new_from_str(s);
         let ns = &n.to_string()[..];
         assert_eq!(ns.trim(), s.to_string());        
     }
@@ -202,7 +210,6 @@ fn main() {
 
     // Get the configuration file and build a Config object from it
     let args: Vec<String> = env::args().collect();
-    eprintln!("args: {:?}", args);
     if args.len() != 2 {
         panic!("Call with one argument only.  The configuration file");
     }
