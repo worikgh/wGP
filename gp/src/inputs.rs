@@ -1,6 +1,7 @@
 /// Define the named inputs to a programme.  Each tree is a function
 /// over a set of named inputs
 use std::collections::HashMap;
+#[derive(Debug)]
 pub struct Inputs {
     dataf:HashMap<String, f64>,
 }
