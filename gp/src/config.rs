@@ -22,7 +22,6 @@ impl Config {
     }
     #[allow(dead_code)]
     pub fn new(cfg_file:&str)-> Config {
-        eprintln!("Config file: {} ", cfg_file);
         let file = File::open(cfg_file).unwrap();
         Config::new_file(file)
     }
