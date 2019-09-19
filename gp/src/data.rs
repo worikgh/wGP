@@ -51,7 +51,9 @@ impl Data {
             testing_i:Vec::<usize>::new(),
             training_i:Vec::<usize>::new(),
         };
-        ret.read_data(data_file, training_percent).unwrap();
+        
+        ret.read_data(data_file, training_percent).
+            expect(format!("Could not read: {}", data_file).as_str());
         ret
     }
 
@@ -109,8 +111,6 @@ impl Data {
         for i in 0..self.names.len() - 1 {
             self.input_names.push(self.names[i].clone());
         }
-        eprintln!("Names: {:?}", self.names);
-        eprintln!("Input Names: {:?}", self.input_names);
         
         // Loop over the data storing it in the rows
         loop {
